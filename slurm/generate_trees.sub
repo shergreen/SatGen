@@ -1,0 +1,14 @@
+#!/bin/bash
+
+#SBATCH --job-name=generate_trees
+#SBATCH --output=trees.out
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=20
+#SBATCH --time=06:00:00
+#SBATCH --mem-per-cpu=8G
+
+cd ~/SatGen
+
+source activate default
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
+python TreeGen_Sub.py $SLURM_CPUS_PER_TASK
