@@ -3,6 +3,7 @@
 # Auxiliary functions.
 
 # Arthur Fangzhou Jiang 2019 Hebrew University
+# Sheridan Beckwith Green 2020 Yale University
 
 #########################################################################
 
@@ -330,3 +331,44 @@ def pixelize(R):
     #im[im==0.] = cfg.Sigma_sky # <<< play with
     im[im==0.] = 1e-6 * im.max()
     return im.T
+def add_cyl_vecs(xv1, xv2):
+    """
+    Given two 6D position+velocity vectors in the cylindrical coordinate
+    system, computes their vector sum and returns a new 6D position+
+    velocity vector.
+    
+    Syntax:
+        
+        add_cyl_vecs(xv1, xv2)
+        
+    where
+    
+        xv1: the first 6D position+velocity vector (float array of length 6)
+        xv2: the second 6D position+velocity vector (float array of length 6)
+    
+    Return:
+     
+        xvnew: the vector sum of xv1 and xv2 (float array of length 6)
+    """
+    R1, phi1, z1, VR1, Vphi1, Vz1 = xv1
+    R2, phi2, z2, VR2, Vphi2, Vz2 = xv2
+    xvnew = np.zeros(6)
+    xvnew[2] = z1 + z2 # z add directly
+    xvnew[5] = Vz1 + Vz2
+    xnew = R1*np.cos(phi1) + R2*np.cos(phi2)
+    ynew = R1*np.sin(phi1) + R2*np.sin(phi2)
+    Rnew = np.sqrt(xnew**2. + ynew**2.)
+    phinew = np.arctan2(ynew, xnew)
+    xvnew[0] = Rnew
+    xvnew[1] = phinew
+    Vx1 = np.cos(phi1)*VR1 - np.sin(phi1)*Vphi1
+    Vy1 = np.sin(phi1)*VR1 + np.cos(phi1)*Vphi1
+    Vx2 = np.cos(phi2)*VR2 - np.sin(phi2)*Vphi2
+    Vy2 = np.sin(phi2)*VR2 + np.cos(phi2)*Vphi2
+    Vxnew = np.sqrt(Vx1**2. + Vx2**2.)
+    Vynew = np.sqrt(Vy1**2. + Vy2**2.)
+    VRnew = np.cos(phinew)*Vxnew + np.sin(phinew)*Vynew
+    Vphinew = -np.sin(phinew)*Vxnew + np.cos(phinew)*Vynew
+    xvnew[3] = VRnew
+    xvnew[4] = Vphinew
+    return xvnew

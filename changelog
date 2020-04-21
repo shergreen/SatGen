@@ -10,13 +10,99 @@ converges to a fixed value for timesteps at or below ~0.06 Gyr.
 Will be doing my model in SubEvo.py, which aims to just do NFW-only subhalo
 evolution modeling.
 
+3. (copied TreeGen.py to TreeGen_Sub.py)
+Will be running TreeGen_Sub, which instead assumes that the host haloes are
+NFW, rather than Dekel. Within this new version, we also are implementing an option to use a different initialization of orbits using Zhao-Zhou Li's universal model of orbital parameters.
 
+4. (added Li2020 and orbit_from_Li2020 to init.py)
+Working on adding functions to generate the orbital parameters based on Li's method.
 
+5. (added alpha_from_c2 to evolve.py)
+This will be modified again in the future based on our final calibrated model of subhalo stripping efficiency given the host-to-sub concentration ratio.
+
+April 9, 2020:
+1. (TreeGen_Sub.py)
+I haven't yet made the change, but I have identified the point where we will make the change to properly convert from virial mass/concentration to 200c-based mass/concentration/radius.
+
+2. (config.py)
+I added the fitting parameters for the Green and vdB (2019) model.
+I added the M(<R)/R^3 - f_b - c interpolator for enclosed mass model, but I have yet to figure out what to do about converting from DASH units to physical units.
+
+3. (profiles.py)
+I added the Green() model and the enclosed mass within tidal radius function.
+This function uses an interpolator from the config file. I next need to update the stripping function to work with Green profiles, where instead of computing the tidal radius, we just determine the mass enclosed within tidal radius, strip, and update the subhalo f_b.
+
+April 10, 2020:
+1. (init.py)
+Since the DM subhalo evolution will not be using Dekel+ profiles, I made a simple function in init.py called c2_fromMAH() that just returns the Zhao+09 concentration given the halo virial mass accretion history.
+
+2. (SubEvo.py and TreeGen_Sub.py)
+I have removed all material related to stellar components in these versions of the code, as there is no need to track them. I've also switched to using the Bryan and Norman virial definition throughout TreeGen_Sub and SubEvo, noting that we may have to do a conversion to 200c definition when using ZZ Li's model for selecting the infall subhalo parameters.
+I have also switched everything over to use Green and NFW profiles. In SubEvo, the host halo is an NFW potential until its root redshift (before becoming a subhalo itself). Once we reach the host's root redshift, we transition it to a Green profile, and then for each timestep thereafter we just update the mass of the Green profile.
+
+April 13, 2020:
+1. (SubEvo.py)
+Changed SubEvo to store the computed tidal radii after each timestep in the VirialRadius array, such that the halo grows as an NFW profile until it becomes accreted, and then we store the tidal radius in place of the virial radius. This will be used in the evolution of subsequent levels, where we will assign a probability of higher-order subhalo release depending on whether or not the subhalo is outside of the instantaneous tidal radius of its host.
+
+April 14, 2020:
+1. (evolve.py)
+I changed the mass update in msub() to set dm=max*dm,0.) to avoid cases where the subhalo ends up actually gaining mass (which can occasionally happen in a Green profile).
+I changed around several details of the Tormen98 and King62 functions as well as the ltidal() function. Now, we instead have lt_King62_RHS() and lt_Tormen98_RHS() that compute the host-halo dependent quantities as the right-hand side *one time* and we instead have a function Findlt() that takes this right-hand side and evaluates the subhalo mass enclosed within l, returning lhs-rhs. This reduces the number of unnecessary calculations while we are root-finding for the tidal radius.
+I also changed the way that dlnM/dlnR is computed, rather than using epsilon, we actually just solve for the value dlnM/dlnR = (dM/dR) * R/M = 4. * pi * R^3 * rho(R) / M(R). This is more well-behaved numerically and will work with all profiles.
+
+2. (profiles.py)
+Continued finishing up the Green profile. Added a mass interpolator, initialized in config.py, which interpolates as a function of r/rvir, c, and f_b. Also wrote the sigma() interpolator and the Green profile is now finished.
+
+3. (SubEvo.py)
+Added GreenRte, an array that stores the r_{te} values in physical units once haloes start becoming stripped. I want to save this so that we can plot substructure evolution videos for visualization purposes. We can plot the trajectories of the subhaloes vs. time where haloes are represented by spheres with radii corresponding to their virial radii before infall and then their r_{te} radii after infall, until they hit Mmin, in which case we can have them "disrupt" according to the visualization.
+
+April 15, 2020:
+1. (SubEvo.py)
+I changed the time-loop to run from iza to 1, rather than iza-1 to 0. In this
+case, the subhalo at t_{i} evolves according to the potential of the host halo
+at t_{i} (as opposed to the host potential at t_{i+1}, which was previously
+the case. I also changed some other ordering as well:
+At t_{i}, starting with the subhalo root redshift (iza), we update the host to
+that at t_{i}. We then strip mass based on the instantaneous position of the
+subhalo at t_{i}, giving us m_{t_{i+1}}. Then, we integrate the orbit forward to get the new
+position/velocity, but using the pre-stripped mass m_{t_{i}} for the
+computation of dynamical friction. We then check if the *new* position at t_{i+1} of
+the subhalo is outside of the tidal radius of the parent at t_{i}, in other
+words if over the timestep the subhalo has left the previous tidal radius of the
+parent. If so, we release with probability dt/(alpha*t_dyn), where t_dyn is
+the dynamical time at the radius that the host is w.r.t. the grandparent. If
+released, the subhalo is given position/velocity corresponding to its vector
+xv_{i+1} + the xv_{i+1} of the host halo that it is being released from.
+
+To me, this procedure makes a bit more sense than that implemented in the
+original SatGen version. These changes were finished and augmented the next
+day, so see notes for April 16.
+
+April 16, 2020:
+1. (aux.py)
+I added a function that adds vector-wise 6d cylindrical vectors for use when
+adding the position+velocity vector of a released subhalo and that of its
+immediate host. I was previously just adding them and forgot that it isn't
+cartesian.
+
+2. (SubEvo.py)
+I changed the release scheme to use the dynamical time and alpha of the parent
+at the t_{i}, rather than of the subhalo at t_{i}, since the probability of
+being stripped from the parent really should be proportional to the stripping
+rate of the parent due to the grandparent.
+
+April 17, 2020:
+1. (galhalo.py)
+I added the option in the Zhao+09 concentration model to choose between the
+fitting function parameters of vdB+14 or Zhao+09. I also tested both out and find that it doesn't make a meaningful difference in the SHMFs. This is now an option to change easily at the top of TreeGen_Sub.py
+
+2. (init.py and TreeGen_Sub.py)
+I finished implementing Zhaozhou Li's model for the subhalo orbital infall distriubion, but still need to finalize by specifying what the velocity actually is defined relative to (either V_200 or V_vir), which is pending an email from ZZ.
+
+April 21, 2020:
+1. (init.py and TreeGen_Sub.py)
+I finished implementing ZZ Li's model for subhalo infall, in the ZZLi2020 and orbit_from_Li2020 functions in init.py.
 
 TODO:
-1. Change lines 174 and 175 of TreeGen.py to work with the Jiang+15 pdfs
-2. Figure out if the masses/radii are virial or 200c, and how the DASH results
-will be impacted by this.
-3. Figure out how to work with the multiple levels of substructure and what to
-use for the host halo mass
-4. Figure out how the tree structure works
+1. Understand the interpretation of using BN98 for DASH concentrations/radii definitions.
+2. Keep warning messages turned on for first few runs.

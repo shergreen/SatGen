@@ -14,7 +14,7 @@ import numpy as np
 from scipy.integrate import ode
 
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning)
+#warnings.filterwarnings("ignore", category=UserWarning)
 
 #########################################################################
 

@@ -15,10 +15,16 @@
 #      CoulombLogChoices only depend on satellite mass m and host 
 #      potential 
 
+# Sheridan Beckwith Green (2020, Yale University) --- revisions
+#
+# - Added Green profile, which is an NFW profile multiplied by the
+#   transfer function from Green and van den Bosch (2019)
+
 #########################################################################
 
 import config as cfg # for global variables
 import cosmo as co # for cosmology related functions
+import warnings
 
 import numpy as np
 from scipy.optimize import brentq
@@ -1203,6 +1209,375 @@ class MN(object):
         Vphisqr = cfg.G*self.Md**2 *self.a *self.b**2 / \
             (cfg.FourPi*self.rho(R,z)) * Rsqr/(s2**3. *(Rsqr+s1sqr)**3.)
         return np.sqrt(Vphisqr)
+class Green(object):
+    """
+    Class that implements the Green and van den Bosch (2019) profile,
+    which incorporates tidal evolution on top of a standard Navarro, 
+    Frenk, & White (1997) profile:
+
+        rho(R,z) = H(r | f_b, c_s) * rho_{NFW}(R,z)
+
+        where
+
+        rho_{NFW}(R,z) = rho_crit * delta_char / [(r/r_s) * (1+r/r_s)^2]
+                       = rho_0 / [(r/r_s) * (1+r/r_s)^2]
+
+        and
+
+        H(r | f_b, c) = f_{te} / [1+( r * [(r_{vir} - r_{te})/
+                          (r_{vir} * r_{te})])^delta]
+
+    
+    in a cylindrical frame (R,phi,z), where 
+    
+        r = sqrt(R^2 + z^2)
+        r_s: scale radius, at which d ln rho(r) / d ln(r) = -2
+        rho_crit: critical density of the Universe
+        delta_char = Delta_halo / 3 * c^3 / f(c), where c = R_vir / r_s 
+            is the concentration parameter
+        H: transfer function that converts from NFW to stripped profile
+        f_b: bound mass fraction relative to peak mass at infall
+        f_{te}, r_{te}, delta: free parameters calibrated against DASH
+            simulations, all are functions of f_b and c
+    
+    Syntax:
+    
+        halo = Green(Mi,c,Delta=200.,z=0.)
+        
+    where 
+    
+        Mi: initial halo mass [M_sun], where halo is defined as spherical 
+            overdensity of Delta times critical density (float) 
+        c: halo concentration (float)
+        Delta: average overdensity of the halo, in multiples of the 
+            critical density of the Universe (float)
+            (default 200.)
+        z: redshift (float) (default 0.)
+    
+    Attributes:
+    
+        .Mh: CURRENT halo mass [M_sun]
+        .Minit: INITIAL halo mass [M_sun]
+        .ch: INITIAL halo concentration (undefined once halo begins to be 
+             stripped)
+        The remaining below are properties of the initial NFW halo prior
+        to the onset of stripping.
+        .Deltah: spherical overdensity wrt instantaneous critical density
+        .rhoc: critical density [M_sun kpc^-3]
+        .rhoh: average density of halo [M_sun kpc^-3]
+        .rh: halo radius within which density is Delta times rhoc [kpc]
+        .rs: scale radius [kpc]
+        .rmax: radius at which maximum circular velocity is reached [kpc]
+        .sigma0: physical units for velocity dispersion for DASH conversion [kpc/Gyr]
+        
+    Methods:
+    
+        .rho(R,z=0.): density [M_sun kpc^-3] at radius r=sqrt(R^2+z^2)
+        .M(R,z=0.): mass [M_sun] enclosed in radius r=sqrt(R^2+z^2)
+        .rhobar(R,z=0.): mean density [M_sun kpc^-3] within radius
+            r=sqrt(R^2+z^2)
+        .tdyn(R,z=0.): dyn. time [Gyr] within radius r = sqrt(R^2+z^2)
+        #.Phi(R,z=0.): potential [(kpc/Gyr)^2] at radius r=sqrt(R^2+z^2) # Not implemented currently, since not needed.
+        .fgrav(R,z): grav. acceleration [(kpc/Gyr)^2 kpc^-1] at (R,z)
+        .Vcirc(R,z=0.): circ. vel. [kpc/Gyr] at radius r=sqrt(R^2+z^2)
+        .sigma(R,z=0.): vel. disp. [kpc/Gyr] at radius r=sqrt(R^2+z^2)
+    
+    HISTORY: Sheridan Beckwith Green (2020-04, Yale)
+    """
+    def __init__(self,Mi,c,Delta=200.,z=0.):
+        """
+        Initialize Green profile.
+        
+        Syntax:
+        
+            halo = Green(Mi,c,Delta=200.,z=0.)
+        
+        where
+        
+            Mi: INITIAL halo mass [M_sun] (float), 
+            c: INITIAL halo concentration at infall(float),        
+            Delta: spherical overdensity with respect to the critical 
+                density of the universe (default is 200.)         
+            z: redshift of infall (float)
+        """
+        # input attributes
+        self.Minit = Mi
+        self.Mh = Mi
+        self.fb = 1.
+        self.log10fb = np.log10(self.fb)
+        self.ch = c
+        self.log10ch = np.log10(self.ch)
+        self.Deltah = Delta
+        #
+        # derived attributes
+        self.rhoc = co.rhoc(z,cfg.h,cfg.Om,cfg.OL)
+        self.rhoh = self.Deltah * self.rhoc
+        self.rh = (3.*self.Minit / (cfg.FourPi*self.rhoh))**(1./3.)
+        self.rs = self.rh / self.ch
+        self.rmax = self.rs * 2.163
+        self.sigma0 = np.sqrt(cfg.G * self.Minit / self.rh)
+        #
+        # attributes repeatedly used by following methods
+        self.rho0 = self.rhoc*self.Deltah/3.*self.ch**3./self.f(self.ch)
+        self.Phi0 = -cfg.FourPiG*self.rho0*self.rs**2.
+
+    def transfer(self, x):
+        """
+        Transfer function from Green and van den Bosch (2019), defined
+        by equations (5-8) and Table 1. This is used to compute the
+        stripped density profile
+
+        Syntax:
+
+            .transfer(x)
+
+        where
+
+            x: dimensionless radius r/r_s (float or array)
+        """
+
+        fte = 10**(cfg.gvdb_fp[0] * (self.ch / 10.)**cfg.gvdb_fp[1] * self.log10fb + cfg.gvdb_fp[2] * (1. - self.fb)**cfg.gvdb_fp[3] * self.log10ch)
+        rte = 10**(self.log10ch + cfg.gvdb_fp[4] * (self.ch / 10.)**cfg.gvdb_fp[5] * self.log10fb + cfg.gvdb_fp[6] * (1. - self.fb)**cfg.gvdb_fp[7] * self.log10ch) * np.exp(cfg.gvdb_fp[8] * (self.ch / 10.)**cfg.gvdb_fp[9] * (1. - self.fb))
+        delta = 10**(cfg.gvdb_fp[10] + cfg.gvdb_fp[11]*(self.ch / 10.)**cfg.gvdb_fp[12] * self.log10fb + cfg.gvdb_fp[13] * (1. - self.fb)**cfg.gvdb_fp[14] * self.log10ch)
+
+        rte = min(rte, self.ch)
+
+        return fte / (1. + (x * ((self.ch - rte)/(self.ch*rte)))**delta)
+
+    def rte(self):
+        """
+        Returns just the r_{te} quantity from the transfer function 
+        of Green and van den Bosch (2019), defined by equation (7)
+        and Table 1. The r_{te} will be in physical units.
+
+        Syntax:
+
+            .rte()
+
+        """
+
+        rte = 10**(cfg.gvdb_fp[4] * (self.ch / 10.)**cfg.gvdb_fp[5] * self.log10fb + cfg.gvdb_fp[6] * (1. - self.fb)**cfg.gvdb_fp[7] * self.log10ch) * np.exp(cfg.gvdb_fp[8] * (self.ch / 10.)**cfg.gvdb_fp[9] * (1. - self.fb))
+
+        rte = min(rte, 1.)
+
+        return rte*self.rh
+
+    def update_mass(self, Mnew):
+        """
+        Updates Green profile Mh to be the new mass after some
+        stripping has occurred. The bound fraction is updated according
+        to this new Mh value, and the log10(f_b) is updated as well in
+        order to save computation time when computing densities.
+        """
+        # let's make sure that fb > 1e-5
+        self.Mh = Mnew
+        self.fb = self.Mh / self.Minit
+        if(self.fb < cfg.fbv_min):
+            self.fb = cfg.fbv_min
+            self.Mh = cfg.Mres
+            # Note that these won't line up, but this is just to
+            # effectively destroy the subhalo if it's been stripped
+            # to be less than 10^-5 of its original mass, as it wouldn't
+            # show up on SHMFs anyway.
+        self.log10fb = np.log10(self.fb)
+        return self.Mh # just in case it was set to Mres
+
+    def f(self,x):
+        """
+        Auxiliary method for NFW profile: f(x) = ln(1+x) - x/(1+x)
+    
+        Syntax:
+    
+            .f(x)
+        
+        where
+        
+            x: dimensionless radius r/r_s (float or array)
+        """
+        return np.log(1.+x) - x/(1.+x) 
+    def rho(self,R,z=0.):
+        """
+        Density [M_sun kpc^-3] at radius r = sqrt(R^2 + z^2). 
+            
+        Syntax:
+        
+            .rho(R,z=0.)
+        
+        where
+        
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r)
+        """
+        r = np.sqrt(R**2.+z**2.) 
+        x = r / self.rs
+        return self.transfer(x) * self.rho0 / (x * (1.+x)**2.)
+    def M(self,R,z=0.):
+        """
+        Mass [M_sun] within radius r = sqrt(R^2 + z^2).
+            
+        Syntax:
+        
+            .M(R,z=0.)
+        
+        where
+        
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r)       
+        """
+        r_by_rvir = np.sqrt(R**2.+z**2.) / self.rh
+        if(isinstance(r_by_rvir, float)):
+            return self._from_interp(r_by_rvir, 'mass')
+        else:
+            # assume array
+            enc_masses = np.zeros(len(r_by_rvir))
+            for i in range(0,len(r_by_rvir)):
+                enc_masses[i] = self._from_interp(r_by_rvir[i], 'mass')
+            return enc_masses
+    def _from_interp(self, r_by_rvir, type='mass'):
+        """
+        Computes the enclosed mass or isotropic velocity dispersion at
+        r/r_{vir} using interpolations of the mass/dispersion profile 
+        computed from the Green and van den Bosch (2019) density model.
+            
+        Syntax:
+        
+            ._from_interp(r_by_rvir,type)
+        
+        where
+        
+            r_by_rvir: spherical radius normalized by virial radius (float)
+            type: 'mass' or 'sigma', denoting which profile to compute    
+        """
+
+        if(type == 'mass'):
+            interp = cfg.fb_cs_interps_mass
+            phys_unit_mult = self.Minit
+        elif(type == 'sigma'):
+            interp = cfg.fb_cs_interps_sigma
+            phys_unit_mult = self.sigma0
+        else:
+            sys.exit("Invalid interpolation type specified!")
+
+        if(r_by_rvir < cfg.rv_min):
+            warnings.warn("A radius value r/rvir=%.2e is smaller than the interpolator bound in %s!" % (r_by_rvir, type))
+            r_by_rvir = cfg.rv_min
+        elif(r_by_rvir > cfg.rv_max):
+            warnings.warn("A radius value r/rvir=%.2e is larger than the interpolator bound in %s!" % (r_by_rvir, type))
+            r_by_rvir = cfg.rv_max
+        
+        # determine which slices in r-space we lie between
+        ind_high = np.searchsorted(cfg.r_vals_int, r_by_rvir)
+        ind_low = ind_high - 1
+
+        # compute mass given f_b, c on each of the two planes in r
+        val1 = interp[ind_low](self.log10fb, self.log10ch)
+        val2 = interp[ind_high](self.log10fb, self.log10ch)
+
+        # linearly interpolate between the two planes
+        val = val1 + (val2 - val1) * (r_by_rvir - cfg.r_vals_int[ind_low]) / (cfg.r_vals_int[ind_high] - cfg.r_vals_int[ind_low])
+
+        return val * phys_unit_mult
+    def rhobar(self,R,z=0.):
+        """
+        Average density [M_sun kpc^-3] within radius r = sqrt(R^2 + z^2). 
+            
+        Syntax:
+        
+            .rhobar(R,z=0.)
+        
+        where 
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r)   
+        """
+        r = np.sqrt(R**2.+z**2.)
+        return 3.*self.M(r) / (cfg.FourPi * r**3)
+    def tdyn(self,R,z=0.):
+        """
+        Dynamical time [Gyr] within radius r = sqrt(R^2 + z^2).
+
+        Syntax:
+        
+            .tdyn(R,z=0.)
+            
+        where
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r)     
+        """
+        return np.sqrt(cfg.ThreePiOverSixteenG / self.rhobar(R,z))
+    def fgrav(self,R,z):
+        """
+        gravitational acceleration [(kpc/Gyr)^2 kpc^-1] at location (R,z)
+        
+            [- d Phi(R,z) / d R, 0, - d Phi(R,z) / d z]
+        
+        Syntax:
+            
+            .fgrav(R,z)
+            
+        where
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+        
+        Note that unlike the other methods, where z is optional with a 
+        default of 0, here z must be specified.
+        
+        Return:
+        
+            R-component of gravitational acceleration
+            phi-component of gravitational acceleration
+            z-component of gravitational acceleration
+        """
+        r = np.sqrt(R**2.+z**2.)
+        fac = -cfg.G * self.M(r) / r**3.
+        return fac*R, 0., fac*z
+    def Vcirc(self,R,z=0.):
+        """
+        Circular velocity [kpc/Gyr] at radius r = sqrt(R^2 + z^2).
+            
+        Syntax:
+        
+            .Vcirc(R,z=0.)
+            
+        where
+
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r) 
+        """
+        r = np.sqrt(R**2.+z**2.)
+        return np.sqrt(r*-self.fgrav(r,0.)[0])
+    def sigma(self,R,z=0.):
+        """
+        Velocity dispersion [kpc/Gyr] at radius r = sqrt(R^2 + z^2), 
+        assuming isotropic velicity dispersion tensor, computed from
+        an interpolation of the velocity dispersion calculated using
+        equation (B6) of vdBosch+2018 from the Green and van den Bosch
+        (2019) profile.
+                
+        Syntax:
+            
+            .sigma(R,z=0.)
+        
+        where
+        
+            R: R-coordinate [kpc] (float or array)
+            z: z-coordinate [kpc] (float or array)
+                (default=0., i.e., if z is not specified otherwise, the 
+                first argument R is also the halo-centric radius r) 
+        """
+        r = np.sqrt(R**2.+z**2.)
+        r_by_rvir = r / self.rh
+        
+        return self._from_interp(r_by_rvir, 'sigma')
     
 #--- functions dealing with composite potential (i.e., potential list)---
 

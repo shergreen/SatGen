@@ -1,15 +1,19 @@
 ############### Functions for initializing satellites ###################
 
 # Arthur Fangzhou Jiang 2019, HUJI
+# Sheridan Beckwith Green 2020, Yale University
 
 #########################################################################
 
 import numpy as np
+import sys
 
 import config as cfg
 import cosmo as co
 import galhalo as gh
 import aux as aux
+
+from scipy.stats import lognorm, expon
 
 #########################################################################
 
@@ -233,8 +237,116 @@ def Dekel_fromMAH(Mv,t,z):
     alpha, Ms = aDekel(Mv[0],c2,z)
     c = cDekel(c2,alpha)
     return c, alpha, Ms, c2
+def c2_fromMAH(Mv,t):
+    """
+    Returns the NFW concentration, c_{-2}, given the halo mass 
+    assembly history (MAH), using the Zhao+09 formula.
+    
+    Syntax:
+        
+        c2_fromMAH(Mv,t)
+        
+    where
+    
+        Mv: main-branch mass history until the time of interest [M_sun]
+            (array)
+        t: the time series of the main-branch mass history (array of the
+            same length as Mv)
+    
+    Note that we need Mv and t in reverse chronological order, i.e., in 
+    decreasing order, such that Mv[0] and t[0] are the instantaneous halo
+    mass and instantaneous cosmic time, respectively.
+    
+    Return:
+        
+        c_-2 (float)
+    """
+    return gh.c2_Zhao09(Mv,t)
     
 #---for initializing orbit
+
+def ZZLi2020(Mhost, Msub, z):
+    """
+    Compute the V/Vvir and infall angle of a satellite given the host
+    and subhalo masses and the redshift of the merger based on the
+    universal model of Zhao-Zhou Li, in prep.
+    
+    Syntax:
+    
+        ZZLi2020(Mhost, Msub, z)
+        
+    where
+    
+        Mhost: host mass (float)
+        Msub: infalling subhalo mass (float)
+        z: redshift of merger (float)
+            
+    Return:
+
+        v_by_vvir: total velocity at infall, normalized by Vvir (float)
+        gamma: angle of velocity vector at infall (radians, float)
+    
+    Note:
+        Theta is defined to be zero when the subhalo is falling radially
+        in. Hence, for consistency with our coordinate system, we return
+        gamma = pi - theta, theta=0 corresponds to gamma=pi, radial infall.
+    """
+    zeta = Msub / Mhost
+    nu = co.nu(Mhost, z, **cfg.cosmo)
+    a = -0.97 + (0.74 * nu) + (4.8 * zeta**0.40)
+    v_by_vvir = lognorm.rvs(s=0.22, scale=1.2)
+    eta = a * np.exp(-np.log(v_by_vvir)**2. / 0.04) # parameter b=0.2, b^2=0.04
+    one_minus_cos2t = 1.1
+    while(one_minus_cos2t > 1.): # only takes values between 0 and 1
+        one_minus_cos2t = expon.rvs(scale=1./eta)
+    theta = np.arccos(np.sqrt(1. - one_minus_cos2t))
+    gamma = np.pi - theta
+    return v_by_vvir, gamma
+def orbit_from_Li2020(hp, vel_ratio, gamma):
+    """
+    Initialize the orbit of a satellite, given total velocity V/Vvir 
+    and infall angle.  
+    
+    Syntax:
+    
+        orbit(hp, vel_ratio, gamma)
+        
+    where
+    
+        hp: host potential (a halo density profile object, as defined 
+            in profiles.py) 
+        vel_ratio: the total velocity at infall in units of Vvir
+        gamma: the angle between velocity and position vectors of subhalo
+            
+    Return:
+    
+        phase-space coordinates in cylindrical frame 
+        np.array([R,phi,z,VR,Vphi,Vz])
+
+    Note:
+        This assumes that the BN98 virial mass definition is used
+        for the haloes, since the host rh quantity is used as the radius
+        where the circular velocity is computed.
+    """
+    r0 = hp.rh
+    V0 = vel_ratio * hp.Vcirc(r0)
+    theta = np.arccos(2.*np.random.random()-1.) # i.e., isotropy
+    zeta = 2.*np.pi*np.random.random() # i.e., uniform azimuthal 
+        # angle, zeta, of velocity vector in theta-phi-r frame 
+    sintheta = np.sin(theta)
+    costheta = np.cos(theta)
+    singamma = np.sin(gamma)
+    cosgamma = np.cos(gamma)
+    sinzeta = np.sin(zeta)
+    coszeta = np.cos(zeta)
+    return np.array([
+        r0 * sintheta,
+        np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+        r0 * costheta,
+        V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
+        V0 * singamma * sinzeta,
+        V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
+        ])
 
 def orbit(hp,xc=1.0,eps=0.5):
     """

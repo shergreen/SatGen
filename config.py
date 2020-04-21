@@ -6,13 +6,14 @@
 # x defined here in the other modules as cfg.x 
 
 # Arthur Fangzhou Jiang 2017 Hebrew University
+# Sheridan Beckwith Green 2020 Yale University
 
 #########################################################################
 
 import cosmo as co
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, RectBivariateSpline
 
 ########################## user control #################################
 
@@ -39,7 +40,7 @@ Rres = 0.001 # [kpc] spatial resolution
 ############################# constants #################################
 
 G = 4.4985e-06 # gravitational constant [kpc^3 Gyr^-2 Msun^-1]
-rhoc0 = 277.5 # [h^2 Msun kpc^-3]
+rhoc0 = 277.5 # [h^2 Msun kpc^-3] # NOTE: this is just for a specific cosmology... should be computed automatically from cosmology above
 
 ln10 = np.log(10.)
 Root2 = np.sqrt(2.)
@@ -110,8 +111,8 @@ dtsample = []
 z = z0
 while z<=zmax:
     tlkbk = co.tlkbk(z,h,Om,OL)
-    tdyn = co.tdyn(z,h,Om,OL)
-    dt = 0.1 * tdyn
+    tdyn = co.tdyn(z,h,Om,OL) # NOTE: This uses BN98 for Delta
+    dt = min(0.06, 0.1 * tdyn)
     z = ztlkbk_interp(tlkbk+dt)
     zsample.append(z)
     dtsample.append(dt)
@@ -132,3 +133,41 @@ print('>>> Tabulating Parkinson+08 J(u_res) ...')
 ures_grid = np.logspace(-6.,6.,1000)
 J_grid = co.J_vec(ures_grid)
 Jures_interp = interp1d(ures_grid, J_grid, kind='linear')
+
+# for Green and van den Bosch (2019) transfer function
+gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
+                     1.33726984e+00,  4.47757739e-01,  2.71551083e-01, 
+                    -1.98632609e-01,  1.05905814e-02, -1.11879075e+00,  
+                     9.26587706e-02,  4.43963825e-01, -3.46205146e-02,
+                    -3.37271922e-01, -9.91000445e-02,  4.14500861e-01])
+
+# for computing enclosed mass within Green and van den Bosch (2019)
+print('>>> Building interpolation grid for Green+19 M(<r|f_b,c)...')
+print('>>> Building interpolation grid for Green+19 sigma(r|f_b,c)...')
+gvdb_mm = np.load('etc/gvdb_mm.npy')
+gvdb_sm = np.load('etc/gvdb_sm.npy')
+nfb = 100
+nr = 131
+ncs = 30
+fb_vals_int = np.logspace(-5, 0, nfb)
+# NOTE: This approach implicitly assumes that DASH concentrations correspond
+# to virial concentrations, and hence that DASH truncates at the BN98 virial
+# radius.
+r_vals_int = np.logspace(-5.5, 1., nr)
+cs_vals_int = np.logspace(0, np.log10(40), ncs)
+fbv_min = np.min(fb_vals_int)
+fbv_max = np.max(fb_vals_int)
+rv_min = np.min(r_vals_int)
+rv_max = np.max(r_vals_int)
+csv_min = np.min(cs_vals_int)
+csv_max = np.max(cs_vals_int)
+log_fb_vals_int = np.log10(fb_vals_int)
+log_r_vals_int = np.log10(r_vals_int)
+log_cs_vals_int = np.log10(cs_vals_int)
+fb_cs_interps_mass = []
+fb_cs_interps_sigma = []
+# TODO: Decide if switching to linear-space from log-space gives
+# a speed-up sufficiently worth it..?
+for i in range(0, nr):
+    fb_cs_interps_mass.append(RectBivariateSpline(log_fb_vals_int, log_cs_vals_int, gvdb_mm[:,:,i]))
+    fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int, log_cs_vals_int, gvdb_sm[:,:,i]))

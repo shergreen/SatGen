@@ -1,6 +1,7 @@
 ################## Functions for galaxy-halo connection ####################
 
 # Arthur Fangzhou Jiang 2019, HUJI
+# Sheridan Beckwith Green 2020, Yale
 
 #########################################################################
 
@@ -162,20 +163,22 @@ def slope(X):
     
 #---concentration-mass-redshift relations
 
-def c2_Zhao09(Mv,t):
+def c2_Zhao09(Mv,t,version='zhao'):
     """
     Halo concentration from the mass assembly history, using the Zhao+09
     relation.
     
     Syntax:
     
-        c2_Zhao09(Mv,t)
+        c2_Zhao09(Mv,t,type)
         
     where
     
         Mv: main-branch virial mass history [M_sun] (array)
         t: the time series of the main-branch mass history (array of the
             same size as Mv)
+        version: 'zhao' or 'vdb' for the different versions of the
+                 fitting function parameters (string)
     
     Note that we need Mv and t in reverse chronological order, i.e., in 
     decreasing order, such that Mv[0] and t[0] is the instantaneous halo
@@ -187,8 +190,14 @@ def c2_Zhao09(Mv,t):
         
         halo concentration c R_vir / r_-2 (float)
     """
+    if(version == 'vdb'):
+        coeff1 = 3.40
+        coeff2 = 6.5
+    elif(version == 'zhao'):
+        coeff1 = 3.75
+        coeff2 = 8.4
     idx = aux.FindNearestIndex(Mv,0.04*Mv[0])
-    return 4.*(1.+(t[0]/(3.75*t[idx]))**8.4)**0.125
+    return 4.*(1.+(t[0]/(coeff1*t[idx]))**coeff2)**0.125
     
 def lgc2_DM14(Mv,z=0.):
     r"""
