@@ -292,7 +292,7 @@ def ltidal(sp,potential,xv,choice='King62'):
     radius (i.e., weaker tidal stripping). 
     """
     a = cfg.Rres
-    b = 10.*sp.rh
+    b = 100.*sp.rh
     if choice=='King62':
         fa = Findlt_King62(a,sp,potential,xv)
         fb = Findlt_King62(b,sp,potential,xv)
@@ -300,7 +300,7 @@ def ltidal(sp,potential,xv,choice='King62'):
             lt = cfg.Rres
         else:
             lt = brentq(Findlt_King62, a,b, args=(sp,potential,xv),
-                rtol=1e-5,maxiter=1000)
+                xtol=0.001,rtol=1e-5,maxiter=1000)
     elif choice=='Tormen98':
         fa = Findlt_Tormen98(a,sp,potential,xv)
         fb = Findlt_Tormen98(b,sp,potential,xv)
@@ -308,7 +308,7 @@ def ltidal(sp,potential,xv,choice='King62'):
             lt = cfg.Rres
         else:
             lt = brentq(Findlt_Tormen98, a,b, args=(sp,potential,xv),
-                rtol=1e-5,maxiter=1000)
+                xtol=0.001,rtol=1e-5,maxiter=1000)
     else: 
         sys.exit('Invalid choice!')
     return lt

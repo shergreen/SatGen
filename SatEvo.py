@@ -13,6 +13,7 @@ import cosmo as co
 import evolve as ev
 from profiles import NFW,Dekel,MN,Einasto
 from orbit import orbit
+import galhalo as gh
 import aux
 
 import numpy as np
@@ -28,13 +29,27 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 ########################### user control ################################
 
-datadir = "./OUTPUT_TREE_20200304/" 
-outdir = "./OUTPUT_SAT_20200304_StrippingEfficiency0.8/"
+fd = 0.1 # <<< play with, disk mass fraction: no disk potential if 0
+flattening = 25. # disk scale radius / disk scale height  
+fb = 0.0 # <<< play with, bulge mass fraction: no bulge potential if 0
+
+datadir = "./OUTPUT_TREE_MW_NIHAO/" 
+#outdir = "./OUTPUT_SAT_MW_fd%.2f_fb%.2f_NIHAO/"%(fd,fb)
+#outdir = "./OUTPUT_SAT_MW_fd%.2f_fb%.2f_NIHAO_EnhancedDF/"%(fd,fb)
+#outdir = "./OUTPUT_SAT_MW_fd%.2f_fb%.2f_NIHAO_WeakenedDF/"%(fd,fb)
+outdir = "./OUTPUT_SAT_MW_fd%.2f_fb%.2f_NIHAO_ZeroDiskDF/"%(fd,fb)
+#datadir = "./OUTPUT_TREE_MW_APOSTLE/" 
+#outdir = "./OUTPUT_SAT_MW_fd%.2f_fb%.2f_APOSTLE/"%(fd,fb)
+
+#datadir = "./OUTPUT_TREE_GROUP_NIHAO/" 
+#outdir = "./OUTPUT_SAT_GROUP_NIHAO/"
+#datadir = "./OUTPUT_TREE_GROUP_APOSTLE/" 
+#outdir = "./OUTPUT_SAT_GROUP_APOSTLE/"
 
 cfg.Mres = 1e6 # <<< using that in TreeGen.py is enough
 cfg.Rres = 0.01 # [kpc] <<< use 0.001 if want to resolve UCDs
 
-StrippingEfficiency = 0.8 # <<< play with
+StrippingEfficiency = 0.6 # <<< play with
 
 ########################### evolve satellites ###########################
 
@@ -44,6 +59,16 @@ for filename in os.listdir(datadir):
     if filename.startswith('tree') and filename.endswith('.npz'): 
         files.append(os.path.join(datadir, filename))
 files.sort()
+
+#---creating output directory
+print('>>> Creating output directory %s ...' % outdir)
+try:
+    os.mkdir(outdir)
+except OSError:
+    print ("    Alarm! Creation of the directory %s failed." % outdir)
+else:
+    print ("    Successfully created the directory %s. " % outdir)
+#sys.exit()
 
 print('>>> Evolving satellites ...')
 
@@ -72,7 +97,8 @@ def loop(file):
     StellarSize = f['StellarSize']
     coordinates = f['coordinates']
     VirialOverdensity = np.zeros(mass.shape,np.float32) + 200.
-   
+    MaxCircularVelocity = np.zeros(mass.shape,np.float32) - 99.
+    
     #---identify the roots of the branches
     izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
     idx = np.arange(mass.shape[0]) # branch ids of all the branches
@@ -112,6 +138,8 @@ def loop(file):
             lealma = lea / lma
             mma = s.M(lma) 
             
+            MaxCircularVelocity[id,iza] = vma 
+            
             # initialize instantaneous quantities to be updated
             m = ma
             r = np.sqrt(xva[0]**2+xva[2]**2)
@@ -137,8 +165,20 @@ def loop(file):
                 cp = DekelConcentration[ip,iz]
                 ap = DekelSlope[ip,iz]
                 Dp = VirialOverdensity[ip,iz] 
-                p = [Dekel(Mp,cp,ap,Delta=Dp,z=z),]
+                if (fd>0.) and (k==1):
+                    
+                    c2p = concentration[ip,iz]
+                    Rvp = VirialRadius[ip,iz]
+                    Rep = gh.Reff(Rvp,c2p)
+                    adp = 0.766421/(1.+1./flattening) * Rep
+                    bdp = adp / flattening
+                    Mdp = fd * Mp
+                    p = [Dekel(Mp,cp,ap,Delta=Dp,z=z),MN(Mdp,adp,bdp),]
                 
+                else:
+                    
+                    p = [Dekel(Mp,cp,ap,Delta=Dp,z=z),]
+                    
                 #---evolve orbit
                 if r>cfg.Rres:
                 
@@ -169,12 +209,14 @@ def loop(file):
                     lh = s.rh
                     c2 = s.rh/s.r2
                     s001 = s.sh
+                    vm = s.Vcirc(s.rmax)
                     
                     # evolve baryonic properties
                     mm = s.M(s.rmax) # update m_max
                     g_le, g_ms = ev.g_EPW18(mm/mma,s001a,lealma) 
                     le = lea * g_le
                     ms = msa * g_ms
+                    ms = min(ms,m) # <<< safety, perhaps rarely triggered
                 
                 else: # we do nothing about disrupted satellite, s.t.,
                     # its properties right before disruption would be 
@@ -211,6 +253,7 @@ def loop(file):
                 DekelConcentration[id,iz] = c
                 DekelSlope[id,iz] = a
                 VirialOverdensity[id,iz] = D
+                MaxCircularVelocity[id,iz] = vm
                 StellarMass[id,iz] = ms
                 StellarSize[id,iz] = le
                 coordinates[id,iz,:] = xv
@@ -235,6 +278,7 @@ def loop(file):
         DekelConcentration = DekelConcentration,
         DekelSlope = DekelSlope,
         VirialOverdensity = VirialOverdensity,
+        MaxCircularVelocity = MaxCircularVelocity,
         StellarMass = StellarMass,
         StellarSize = StellarSize,
         coordinates = coordinates,
@@ -255,8 +299,8 @@ def loop(file):
     z50 = redshift[iz50]
     
     time_end_tmp = time.time()
-    print('    %s: %5.2f min, z50=%5.2f,fsub=%8.5f,fstar=%8.5f'%\
-        (outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub,fstar))
+    print('    %s: %5.2f min, z50=%5.2f,fsub(>1e-4)=%8.5f,fstar=%8.5f'%\
+        (outfile,(time_end_tmp-time_start_tmp)/60.,z50,fsub,fstar))
     #sys.exit() # <<< test
 
 #---for parallelization, comment for testing in serial mode

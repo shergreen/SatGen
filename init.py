@@ -90,6 +90,9 @@ def Mstar(Mv,z=0.,choice='RP17'):
     Stellar mass given halo mass and redshift, using abundance-matching
     relations.
     
+    We assume a 1-sigma scatter of 0.2 in log(stellar mass) at a given
+    halo mass <<< play with this later !!! 
+    
     Syntax:
     
         Ms(Mv,z=0.,choice='RP17')
@@ -110,46 +113,41 @@ def Mstar(Mv,z=0.,choice='RP17'):
         mu = gh.lgMs_RP17(np.log10(Mv),z)
     if choice=='B13':
         mu = gh.lgMs_B13(np.log10(Mv),z)
-    return np.minimum( cfg.Ob/cfg.Om*Mv, 10.**np.random.normal(mu,0.15) )
+    return np.minimum( cfg.Ob/cfg.Om*Mv, 10.**np.random.normal(mu,0.2) )
     
 # for drawing the Dekel+ parameters
 
-def aDekel(Mv,c2,z=0.):
+def aDekel(X,c2,HaloResponse='NIHAO'):
     """
-    Draw the Dekel+ innermost slope, alpha, given halo mass, redshift, 
-    and the conventional halo concentration parameter, c_-2.
+    Draw the Dekel+ innermost slope, given the stellar-to-halo-mass 
+    ratio, the conventional halo concentration parameter c_-2, redshift, 
+    and halo-response pattern.
      
-    In particular, we use the Di Cintio + 2014 relation to compute the 
-    slope, s_0.01, at r = 0.01 R_vir, assuming a 1-sigma scatter of 
-    0.15; then, we express alpha with s_0.01 and c_-2.
+    In particular, we use the halo response relation from simulations
+    to compute the slope, s_0.01, at r = 0.01 R_vir, assuming a 1-sigma 
+    scatter of 0.18, motivated by Tollet+16; then, we express alpha with 
+    s_0.01 and c_-2.
     
     Syntax:
     
-        aDekel(Mv,c2,z=0.)
+        aDekel(X,c2,HaloResponse='NIHAO')
     
     where
     
-        Mv: halo mass [M_sun] (float or array)
+        X: stellar-to-halo-mass ratio (float or array)
         c2: concentration, c_-2 = R_vir / r_-2 (float or array of the 
-            same size as Mv)
-        z: redshift (float or array of the same size as Mv, default=0.)
-            
+            same size as X)
+        HaloResponse: choice of halo response -- 
+            'NIHAO' (default, Tollet+16, mimicking FIRE/NIHAO)
+            'APOSTLE' (Bose+19, mimicking APOSTLE/Auriga)
     Return:
     
-        Dekel+ alpha (float or array of the same size as Mv)
-        stellar mass [M_sun] (float or array of the same size as Mv)
+        Dekel+ alpha (float or array of the same size as X)
     """
-    if z>6.: # a safety: in the regime where the stellar-halo mass
-        # relations are not reliable, manually set the stellar mass
-        Ms = 1e-5 * Mv 
-    else: 
-        Ms = Mstar(Mv,z)
-    mu = gh.slope(Ms/Mv)
-    s = np.maximum(0., np.random.normal(mu, 0.15))
-    #s = np.random.random(len(mu))*2. # <<< test, draw s_0.01 randomly
-        # between 0-2.
+    mu = gh.slope(X,HaloResponse)
+    s = np.maximum(0., np.random.normal(mu, 0.18))
     r = np.sqrt(c2)
-    return ( s + (2.*s-7.)*r/15. ) / (1.+(s-3.5)*r/15.), Ms
+    return ( s + (2.*s-7.)*r/15. ) / (1.+(s-3.5)*r/15.)
 
 def cDekel(c2,alpha):
     """
@@ -172,22 +170,25 @@ def cDekel(c2,alpha):
     """
     return (2.-alpha)**2 / 2.25 * c2
     
-def Dekel(Mv,z=0.):
+def Dekel(Mv,z=0.,HaloResponse='NIHAO'):
     """
     Draw the Dekel+ structural parameters, c and alpha, as well as the 
-    stellar mass, given the halo mass and redshift.
+    stellar mass, given halo mass, redshift, and halo-response pattern
     
     Internally, it draws the conventional halo concentration, c_-2, which
     is used to compute alpha.
     
     Syntax:
     
-        Dekel(Mv,z=0.)
+        Dekel(Mv,z=0.,HaloResponse='NIHAO')
         
     where
     
         Mv: halo mass [M_sun] (float or array)
         z: redshift (float or array of the same size as Mv, default=0.)
+        HaloResponse: choice of halo response -- 
+            'NIHAO' (default, Tollet+16, mimicking FIRE/NIHAO)
+            'APOSTLE' (Bose+19, mimicking APOSTLE/Auriga)
     
     Return:
         
@@ -195,20 +196,31 @@ def Dekel(Mv,z=0.):
         Dekel+ alpha (float or array of the same size as Mv),
         stellar mass [M_sun] (float or array of the same size as Mv)
         c_-2 (float or array of the same size as Mv)
+        DMO c_-2 (float or array of the same size as Mv)
     """
-    c2 = concentration(Mv,z)
-    alpha, Ms = aDekel(Mv,c2,z)
+    c2DMO = concentration(Mv,z)
+    if z>6.: # a safety: in the regime where the stellar-halo mass
+        # relations are not reliable, manually set the stellar mass
+        Ms = 1e-5 * Mv 
+    else: 
+        Ms = Mstar(Mv,z)
+    X = Ms/Mv
+    mu = gh.c2c2DMO(X,HaloResponse) # mean c_-2 / c_-2,DMO
+    c2c2DMO = np.maximum(0., np.random.normal(mu, 0.1))
+    c2 = c2DMO * c2c2DMO
+    c2 = np.maximum(2.,c2) # safety: c_-2 cannot be unrealistically low
+    alpha = aDekel(X,c2,HaloResponse)
     c = cDekel(c2,alpha)
-    return c, alpha, Ms, c2
+    return c, alpha, Ms, c2, c2DMO
     
-def Dekel_fromMAH(Mv,t,z):
+def Dekel_fromMAH(Mv,t,z,HaloResponse='NIHAO'):
     """
     Returns the Dekel+ structural parameters, c and alpha, given the 
     halo mass assembly history (MAH), using the Zhao+09 formula.
     
     Syntax:
         
-        Dekel(Mv,t,z)
+        Dekel(Mv,t,z,HaloResponse='NIHAO')
         
     where
     
@@ -217,6 +229,9 @@ def Dekel_fromMAH(Mv,t,z):
         t: the time series of the main-branch mass history (array of the
             same length as Mv)
         z: the instantaneous redshift (float)
+        HaloResponse: choice of halo response -- 
+            'NIHAO' (default, Tollet+16, mimicking FIRE/NIHAO)
+            'APOSTLE' (Bose+19, mimicking APOSTLE/Auriga)
     
     Note that we need Mv and t in reverse chronological order, i.e., in 
     decreasing order, such that Mv[0] and t[0] are the instantaneous halo
@@ -228,11 +243,22 @@ def Dekel_fromMAH(Mv,t,z):
         Dekel+ alpha (float), 
         stellar mass [M_sun] (float),
         c_-2 (float)
+        DMO c_-2 (float)
     """
-    c2 = gh.c2_Zhao09(Mv,t)
-    alpha, Ms = aDekel(Mv[0],c2,z)
+    c2DMO = gh.c2_Zhao09(Mv,t)
+    if z>6.: # a safety: in the regime where the stellar-halo mass
+        # relations are not reliable, manually set the stellar mass
+        Ms = 1e-5 * Mv[0] 
+    else: 
+        Ms = Mstar(Mv[0],z)
+    X = Ms/Mv[0]
+    mu = gh.c2c2DMO(X,HaloResponse) # mean c_-2 / c_-2,DMO
+    c2c2DMO = np.maximum(0., np.random.normal(mu, 0.1))
+    c2 = c2DMO * c2c2DMO
+    c2 = np.maximum(2.,c2)
+    alpha = aDekel(X,c2,HaloResponse)
     c = cDekel(c2,alpha)
-    return c, alpha, Ms, c2
+    return c, alpha, Ms, c2, c2DMO
     
 #---for initializing orbit
 

@@ -109,9 +109,11 @@ def downsample(y,x,xgrid):
             
     Return 
     
-        ysample: the y values at the x coordinates closest to xgrid,
+        ysample: the y values at the x coordinates closest to xgrid
+            (array),
         xsample: subset of xgrid that corresponds to the range of x
-    
+            (array)
+            
     Note that because of the dependence on FindClosestIndices, y, x and 
     xgrid all have to be numpy arrays, and x and xgrid have to be sorted
     -- one can regard x and xgrid as the redshift grid of a merger tree.
@@ -131,6 +133,9 @@ def downsample(y,x,xgrid):
         # when all the elements of x are close to a single xgrid element.
     idx = FindClosestIndices(x,xsample)
     ysample = y[idx]
+    if np.isscalar(xsample): # safety, make sure to return arrays
+        xsample = np.array([xsample,])
+        ysample = np.array([ysample,])
     return ysample,xsample
 def FindClosestElements(arr, values):
     """

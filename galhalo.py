@@ -19,7 +19,7 @@ def Reff(Rv,c2):
     the halo virial radius and concentration, using the empirical formula
     of Jiang+19 (MN, 488, 4801) eq.6
     
-        R_eff = 0.021 (c/10)^-0.7 R_vir
+        R_eff = 0.02 (c/10)^-0.7 R_vir
     
     Syntax:
     
@@ -31,7 +31,7 @@ def Reff(Rv,c2):
         c2: halo concentration defined as R_vir / r_-2, where r_-2 is the
             radius at which dln(rho)/dln(r) = -2 (float or array)
     """
-    return 0.021 * (c2/10.)**(-0.7) * Rv
+    return 0.02 * (c2/10.)**(-0.7) * Rv
     
 #---stellar-halo-mass relation
 
@@ -140,26 +140,55 @@ def f_RP17(x,a):
     return delta*(np.log10(1.+np.exp(x)))**gamma/(1.+np.exp(10**(-x)))-\
         np.log10(1.+10**( - alpha*x))
 
-#---SMHR-inner-halo-density-slope relation
+#---halo-response patterns
 
-def slope(X):
+def slope(X,choice='NIHAO'):
     """
     Logarithmic halo density slope at 0.01 R_vir, as a function of the 
-    stellar-to-halo-mass ratio X, based on the simulation results of 
-    Di Cintio + (2014).
+    stellar-to-halo-mass ratio X, based on simulation results.
     
     Syntax:
     
-        slope(X)
+        slope(X,choice='NIHAO')
         
     where
     
-        X: M_star / M_vir 
+        X: M_star / M_vir (float or array)
+        choice: choice of halo response -- 
+            'NIHAO' (default, Tollet+16, mimicking strong core formation)
+            'APOSTLE' (Bose+19, mimicking no core formation)
     """
-    s = X / 10**(-2.051)
-    #return np.log10( s**(-0.593) + s**1.99 ) - 0.132 # <<< fiducial
-    return np.log10( 13.6 + s**1.99 ) - 0.132 # <<< test: no core
+    if choice=='NIHAO':
+        s0 = X / 8.77e-3
+        s1 = X / 9.44e-5
+        return np.log10(26.49*(1.+s1)**(-0.85) + s0**1.66) + 0.158
+    elif choice=='APOSTLE':
+        s0 = X / 8.77e-3
+        return np.log10( 20. + s0**1.66 ) + 0.158 
+
+def c2c2DMO(X,choice='NIHAO'):
+    """
+    The ratio between the baryon-influenced concentration c_-2 and the 
+    dark-matter-only c_-2, as a function of the stellar-to-halo-mass
+    ratio, based on simulation results. 
     
+    Syntax:
+    
+        c2c2DMO(X,choice='NIHAO')
+        
+    where
+    
+        X: M_star / M_vir (float or array)
+        choice: choice of halo response -- 
+            'NIHAO' (default, Tollet+16, mimicking strong core formation)
+            'APOSTLE' (Bose+19, mimicking no core formation)
+    """
+    if choice=='NIHAO':
+        #return 1. + 227.*X**1.45 - 0.567*X**0.131 # <<< Freundlich+20
+        return 1.2 + 227.*X**1.45 - X**0.131 # <<< test
+    elif choice=='APOSTLE':
+        return 1. + 227.*X**1.45
+        
 #---concentration-mass-redshift relations
 
 def c2_Zhao09(Mv,t):

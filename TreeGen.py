@@ -21,22 +21,31 @@ import time
 from multiprocessing import Pool, cpu_count
 import sys
 
+# <<< for clean on-screen prints, use with caution, make sure that 
+# the warning is not prevalent or essential for the result
+import warnings
+warnings.filterwarnings("ignore", category=RuntimeWarning) 
+
 ############################# user control ##############################
 
-#---target halo and desired resolution 
-lgM0 = 12.3
+#---target halo, desired resolution, number of trees
+lgM0_lo = 14.00
+lgM0_hi = 14.50
 z0 = 0.
-#lgMres = 8.
-lgMres = 9.
+lgMres = 8.5
 Ntree = 24
 
-#---for output
-outfile1 = './OUTPUT_TREE_20200302/tree%i_lgM%.2f.npz' #%(itree,lgM0)
+#---baryonic-effect choice and output control
+HaloResponse = 'NIHAO'
+outfile1 = './OUTPUT_TREE_CLUSTER_NIHAO/tree%i_lgM%.2f.npz'#%(itree,lgM0)
+
+#HaloResponse = 'APOSTLE'
+#outfile1 = './OUTPUT_TREE_CLUSTER_APOSTLE/tree%i_lgM%.2f.npz'#%(itree,lgM0)
 
 ############################### compute #################################
 
-print('>>> Generating %i trees for log(M_0)=%.2f at log(M_res)=%.2f...'%\
-    (Ntree,lgM0,lgMres))
+print('>>> Generating %i trees for log(M_0)=%.2f-%.2f at log(M_res)=%.2f...'%\
+    (Ntree,lgM0_lo,lgM0_hi,lgMres))
 
 #---
 time_start = time.time()
@@ -49,6 +58,7 @@ def loop(itree):
     
     np.random.seed() # [important!] reseed the random number generator
     
+    lgM0 = lgM0_lo + np.random.random()*(lgM0_hi-lgM0_lo)
     cfg.M0 = 10.**lgM0
     cfg.z0 = z0
     cfg.Mres = 10.**lgMres 
@@ -142,7 +152,8 @@ def loop(itree):
             if i > (izleaf+1): break # only compute structure below leaf
             msk = z>=cfg.zsample[i]
             if True not in msk: break # safety
-            ci,ai,Msi,c2i=init.Dekel_fromMAH(M[msk],t[msk],cfg.zsample[i])
+            ci,ai,Msi,c2i,c2DMOi = init.Dekel_fromMAH(M[msk],t[msk],
+                cfg.zsample[i],HaloResponse=HaloResponse)
             Rvi = init.Rvir(M[msk][0],Delta=200.,z=cfg.zsample[i])
             c.append(ci)
             a.append(ai)
@@ -151,6 +162,21 @@ def loop(itree):
             if i==iz[0]: Ms = Msi
             #print('    i=%6i,ci=%8.2f,ai=%8.2f,log(Msi)=%8.2f,c2i=%8.2f'%\
             #    (i,ci,ai,np.log10(Msi),c2i)) # <<< for test
+        if len(c)==0: # <<< safety, dealing with rare cases where the 
+            # branch's root z[0] is close to the maximum redshift -- when
+            # this happens, the mass history has only one element, and 
+            # z[0] can be slightly above cfg.zsample[i] for the very 
+            # first iteration, leaving the lists c,a,c2,Rv never updated
+            ci,ai,Msi,c2i=init.Dekel_fromMAH(M,t,z[0],
+                HaloResponse=HaloResponse)
+            c.append(ci)
+            a.append(ai)
+            c2.append(c2i)
+            Rv.append(Rvi)
+            Ms = Msi
+            # <<< test
+            #print('    branch root near max redshift: z=%7.2f,log(M)=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f'%\
+            #    (z[0],np.log10(M[0]),c[0],a[0],c2[0],np.log10(Ms))) 
         c = np.array(c)
         a = np.array(a) 
         c2 = np.array(c2) 
@@ -175,7 +201,7 @@ def loop(itree):
             xv = init.orbit(hp,xc=1.,eps=eps)
         
         # <<< test
-        #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
+        #print('    id=%6i,k=%2i,z=%7.2f,log(M)=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
         #    (id,k,z[0],np.log10(M[0]),c[0],a[0],c2[0],np.log10(Ms),Re, xv[0],xv[1],xv[2],xv[3],xv[4],xv[5]))
         
         # update the arrays for output
@@ -239,9 +265,10 @@ def loop(itree):
         )
             
     time_end_tmp = time.time()
-    print('    Tree %5i: %6i branches, %2i order, %8.1f sec'\
-        %(itree,Nbranch,k,time_end_tmp-time_start_tmp))
+    print('    Tree %5i: log(M_0)=%6.2f, %6i branches, %2i order, %8.1f sec'\
+        %(itree,lgM0,Nbranch,k,time_end_tmp-time_start_tmp))
 
+#---for parallelization, comment for testing in serial mode
 if __name__ == "__main__":
     pool = Pool(cpu_count()) # use all cores
     pool.map(loop, range(Ntree))

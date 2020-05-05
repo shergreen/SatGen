@@ -1488,9 +1488,9 @@ def fDF(potential,xv,m):
     for p in potential:
         if isinstance(p,(MN,)): # i.e., if potential p is a disk
             lnL = 0.5
+            #lnL = 0.0 # <<< test: turn off disk's DF 
             VrelR = VR
-            #Vrelphi = Vphi - p.Vcirc(R,z)
-            Vrelphi = Vphi - p.Vphi(R,z) # <<< test
+            Vrelphi = Vphi - p.Vphi(R,z)
             Vrelz = Vz
         else: # i.e., if the potential is a halo
             lnL = np.log(p.Mh/m)
@@ -1502,6 +1502,8 @@ def fDF(potential,xv,m):
         X = Vrel / (cfg.Root2 * p.sigma(R,z))
         fac_s = p.rho(R,z) * lnL * ( erf(X) - \
             cfg.TwoOverRootPi*X*np.exp(-X**2.) ) / Vrel**3 
+        #fac_s = 2.*fac_s # <<< test: enhance DF by a factor of 2
+        #fac_s = 0.5*fac_s # <<< test: weaken DF by half
         sR += fac_s * VrelR 
         sphi += fac_s * Vrelphi 
         sz += fac_s * Vrelz 
