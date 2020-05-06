@@ -52,10 +52,11 @@ and doing orbit integration within spherical or axisymmetric potentials.
 For example, to initialize a halo:
 
 []: from profiles import NFW
+
 []: h = NFW(1e12, 10, Delta=200., z=0.)
 
 This defines a halo "h" following NFW profile of a virial mass of
-$10\times10^{12}\M_\odot$ and a concentration of 10, where a halo is
+<img src="https://render.githubusercontent.com/render/math?math=10\times10^{12}\M_\odot"> and a concentration of 10, where a halo is
 defined as spherical enclosure of 200 times the critical density of 
 the Universe at redshift 0.
  
