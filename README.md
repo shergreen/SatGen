@@ -3,19 +3,19 @@
 A semi-analytical satellite galaxy and dark matter halo generator,
 introduced in Jiang et al. (2020), extended in Green et al. (2020).
 
-- Overview of the model
+- Model overview
 
-SatGen generates satellite-galaxy populations for halos of desired mass
-and redshift. It combines halo merger trees, empirical relations for 
+SatGen generates satellite-galaxy populations for host halos of desired 
+mass and redshift. It combines halo merger trees, empirical relations for 
 galaxy-halo connection, and analytic prescriptions for tidal effects, 
 dynamical friction, and ram-pressure stripping. It emulates zoom-in 
-cosmological hydrosimulations in some ways and outperforms simulations
+cosmological hydrosimulations in certain ways and outperforms simulations
 regarding statistical power and numerical resolution. 
 
-- Modules of the model
+- Modules
 
-profiles.py: halo-density-profile classes, supporting NFW profile, 
-Einasto profile, Dekel+ profile, Miyamoto-Nagai disk
+profiles.py: halo-density-profile classes, currently supporting NFW 
+profile, Einasto profile, Dekel+ profile, and Miyamoto-Nagai disk
 
 orbit.py: orbit class and equation of motion
 
@@ -43,19 +43,22 @@ We recommend using python installations from Enthought or Conda.
 
 - Basic usage
 
-SatGen builds upon density-profile classes and an orbit class. Apart from
-the main purpose of evolving satellites, these modules of SatGen can be
-used for studies involving halo/galaxy profiles (e.g, Jeans modeling) 
-and orbit integration within spherical or axisymmetric potentials. 
+SatGen builds upon density-profile classes and an orbit class, as 
+implemented in profiles.py and orbit.py. Apart from SatGen's main purpose 
+of generating satellite galaxies in a cosmological setup, these 
+two modules are useful for simpler studies that involve halo profiles 
+(e.g, Jeans modeling) and orbit integration within spherical or 
+axisymmetric potential wells. Here we walk through the basic usage of 
+profiles.py and orbit.py. 
  
 To initialize a halo, for example, we can do
 
-`[]: from profiles import NFW`
+`[]: from profiles import NFW,Dekel,Einasto`
 
 `[]: h = NFW(1e12, 10, Delta=200., z=0.)`
 
-This defines a halo object "h" following NFW profile of a virial mass of
-<img src="https://render.githubusercontent.com/render/math?math=M_\mathrm{vir}=10^{12}\M_\odot"> 
+This defines a halo object "h" following an NFW profile of a virial mass 
+of <img src="https://render.githubusercontent.com/render/math?math=M_\mathrm{vir}=10^{12}\M_\odot"> 
 and a concentration of 10, where a halo is defined as spherical enclosure 
 of 200 times the critical density of the Universe at redshift 0. (Note 
 that since the profiles module internally imports the cosmo module, if it 
@@ -75,7 +78,7 @@ the circular velocity <img src="https://render.githubusercontent.com/render/math
 the 1D velocity dispersion <img src="https://render.githubusercontent.com/render/math?math=\sigma(r)">
 [kpc/Gyr]
 (under the assumption of isotropic velocity 
-distributino), and etc, by accessing the corresponding attribute or 
+distributino), etc, by accessing the corresponding attribute or 
 method. For example:
  
 `[]: h.M(10.)`
@@ -92,7 +95,7 @@ To initialize a disk potential:
 
 `[]: d = MN(10**10.7, 6.5, 0.25)`
 
-This defines a disc object "d" of mass 
+This defines a disc object "d" following a Miyamoto-Nagai profile of mass 
 <img src="https://render.githubusercontent.com/render/math?math=M_{\rm d}=10^{10.7}\M_\odot"> 
 with a scale radius of 
 <img src="https://render.githubusercontent.com/render/math?math=a=6.5"> kpc 
@@ -100,21 +103,21 @@ and a scale height of
 <img src="https://render.githubusercontent.com/render/math?math=b=0.25"> kpc. 
 
 Similarly, one can evaluates various quantities by accessing the 
-attributes. For example,
+attributes and mothods of the disk object "d". For example,
 
 `[]: d.Phi(8.,z=0.)`
 
 returns the gravitational potential at the cylindrical coordinate 
 <img src="https://render.githubusercontent.com/render/math?math=(R,z)=(8,0)">.
 
-One can make a composite potential simply by creating a list:
+One can make a composite potential simply by creating a list, e.g., 
 
 `[]: p = [h,d]`
 
 This creates a composite potential consisting of the NFW halo and the 
-MN disk defined above. Then, the properties of the composite potential 
-can be evaluated easily. For example, if we want to get the circular 
-velocity profile, we do
+MN disk defined above. The properties of the composite potential 
+can also be evaluated easily. For example, if we want to get the circular 
+velocity profile, we can do:
 
 `[]: import numpy as np`
 
@@ -124,9 +127,9 @@ velocity profile, we do
 
 Let's say, we now want to integrate the orbit of a point mass
 <img src="https://render.githubusercontent.com/render/math?math=m"> in
-this composite potential "p", we do the following. First, we 
-initialize an orbit, by specifying the initial 6D phase-space 
-coordinate "xv" in the cylindrical frame (a list or an numpy array), xv = 
+this composite potential "p". To do this, first, we initialize the orbit, 
+by specifying the initial 6D phase-space coordinate "xv" in the 
+cylindrical frame (a list or an numpy array), xv = 
 <img src="https://render.githubusercontent.com/render/math?math=[R,\phi,z,V_R,V_\phi,V_z]"> 
 [kpc, radian, kpc, kpc/Gyr, kpc/Gyr, kpc/Gyr] --
 
@@ -161,15 +164,16 @@ be accessed by
 `[]:o.xvArray`
 
 Moving on to a more realistic exercise, we recommend interested readers 
-to follow the program test_evolve.py, which includes an example of 
-evolving a satellite galaxy in a static host potential. This example 
-also considers tidal stripping, heating, and ram-pressure, and thus 
-serves as a good walk-through of not only the profiles.py and orbit.py
-modules, but also the galhalo.py, init.py, and evolve.py modules. 
+to follow the program test_evolve.py. This is an example of 
+evolving a satellite galaxy in a static host potential. In addition to
+halo profiles and orbit integration described above, this example 
+also considers tidal stripping, tidal heating, and ram-pressure 
+stripping, and thus serves as a good walk-through different modules
+(profiles.py, orbit.py, galhalo.py, init.py, and evolve.py). 
 
 - Advanced usage
 
-For full cosmological usage, TreeGen.py and SatEvo.py constitute a 
+For full cosmological applications, TreeGen.py and SatEvo.py constitute a 
 complete set of exercises. TreeGen.py generates EPS merger trees and 
 initializes satellites at the first virial-crossing. SatEvo.py evolves 
 the satellites. 
@@ -180,5 +184,5 @@ multiprocessing library.
 SatGen has detailed docstrings, and all the example programs are designed 
 to be self-explanatory. Please feel free to contact the authors 
 Fangzhou Jiang (fzjiang@caltech.edu) and 
-Sheridan Beckwith Green (sheridan.green@yale.edu)
-if you have questions. 
+Sheridan Beckwith Green (sheridan.green@yale.edu),
+if you have any question. 
