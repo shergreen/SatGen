@@ -70,6 +70,8 @@ the enclosed mass <img src="https://render.githubusercontent.com/render/math?mat
 [<img src="https://render.githubusercontent.com/render/math?math=M_\odot"> ], 
 the gravitational potential <img src="https://render.githubusercontent.com/render/math?math=\Phi(r)"> 
 [<img src="https://render.githubusercontent.com/render/math?math=(\mathrm{kpc/Gyr})^2">], 
+the circular velocity <img src="https://render.githubusercontent.com/render/math?math=V_\mathrm{circ}(r)">
+[kpc/Gyr],
 the 1D velocity dispersion <img src="https://render.githubusercontent.com/render/math?math=\sigma(r)">
 [kpc/Gyr]
 (under the assumption of isotropic velocity 
@@ -115,7 +117,9 @@ can be evaluated easily. For example, if we want to get the circular
 velocity profile, we do
 
 []: import numpy as np
+
 []: R = np.logspace(-3,0,100)
+
 []: Vcirc(p,R,z=0.)
 
 Let's say, we now want to integrate the orbit of a point mass
@@ -127,6 +131,7 @@ coordinate "xv" in the cylindrical frame (a list or an numpy array), xv =
 [kpc, radian, kpc, kpc/Gyr, kpc/Gyr, kpc/Gyr] --
 
 []: import orbit as orb
+
 []: o = orb.orbit(xv)
 
 This gives us an orbit object "o". Then, orbit integration can be done 
