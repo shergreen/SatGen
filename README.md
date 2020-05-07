@@ -50,9 +50,9 @@ and orbit integration within spherical or axisymmetric potentials.
  
 To initialize a halo, for example, we can do
 
-![#c5f015](https://via.placeholder.com/15/c5f015/000000?text=+) `[]:` from profiles import NFW
+!(https://via.placeholder.com/15/c5f015/000000?text=+) `[]:` from profiles import NFW
 
-![#c5f015](https://via.placeholder.com/15/c5f015/000000?text=+) `[]:` h = NFW(1e12, 10, Delta=200., z=0.)
+!(https://via.placeholder.com/15/c5f015/000000?text=+) `[]:` h = NFW(1e12, 10, Delta=200., z=0.)
 
 This defines a halo object "h" following NFW profile of a virial mass of
 <img src="https://render.githubusercontent.com/render/math?math=M_\mathrm{vir}=10^{12}\M_\odot"> 
