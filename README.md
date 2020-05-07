@@ -1,7 +1,7 @@
 # SatGen
 
-A semi-analytical satellite galaxy and dark matter halo generator.
-Introduced in Jiang et al. (2020), extended in Green et al. (2020).
+A semi-analytical satellite galaxy and dark matter halo generator,
+introduced in Jiang et al. (2020), extended in Green et al. (2020).
 
 - Overview of the model
 
@@ -65,8 +65,8 @@ initialize cosmology-related stuff.)
 With the halo object defined, one can easily evaluate, at radius 
 <img src="https://render.githubusercontent.com/render/math?math=r"> 
 [kpc], the density <img src="https://render.githubusercontent.com/render/math?math=\rho(r)"> 
-[<img src="https://render.githubusercontent.com/render/math?math=M_\odot{\rm kpc}^{-3}"> ], 
-the enclosed mass <img src="https://render.githubusercontent.com/render/math?math=M(<r)"> 
+[<img src="https://render.githubusercontent.com/render/math?math=M_\odot\mathrm{kpc}^{-3}"> ], 
+the enclosed mass <img src="https://render.githubusercontent.com/render/math?math=M(r)"> 
 [<img src="https://render.githubusercontent.com/render/math?math=M_\odot"> ], 
 the gravitational potential <img src="https://render.githubusercontent.com/render/math?math=\Phi(r)"> 
 [<img src="https://render.githubusercontent.com/render/math?math=({\rm kpc/Gyr})^2">], 
