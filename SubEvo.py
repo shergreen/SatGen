@@ -31,9 +31,7 @@ from multiprocessing import Pool, cpu_count
 # the warning is not prevalent or essential for the result
 import warnings
 #warnings.simplefilter('always', UserWarning)
-#warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.simplefilter("ignore", UserWarning)
-# TODO: Look at warnings
 
 ########################### user control ################################
 
