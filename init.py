@@ -14,6 +14,7 @@ import galhalo as gh
 import aux as aux
 
 from scipy.stats import lognorm, expon
+from scipy.interpolate import splrep, splev
 
 #########################################################################
 
@@ -237,14 +238,14 @@ def Dekel_fromMAH(Mv,t,z):
     alpha, Ms = aDekel(Mv[0],c2,z)
     c = cDekel(c2,alpha)
     return c, alpha, Ms, c2
-def c2_fromMAH(Mv,t):
+def c2_fromMAH(Mv,t,version='zhao'):
     """
     Returns the NFW concentration, c_{-2}, given the halo mass 
     assembly history (MAH), using the Zhao+09 formula.
     
     Syntax:
         
-        c2_fromMAH(Mv,t)
+        c2_fromMAH(Mv,t,version)
         
     where
     
@@ -252,6 +253,8 @@ def c2_fromMAH(Mv,t):
             (array)
         t: the time series of the main-branch mass history (array of the
             same length as Mv)
+        version: 'zhao' or 'vdb' for the different versions of the
+                 fitting function parameters (string)
     
     Note that we need Mv and t in reverse chronological order, i.e., in 
     decreasing order, such that Mv[0] and t[0] are the instantaneous halo
@@ -261,11 +264,97 @@ def c2_fromMAH(Mv,t):
         
         c_-2 (float)
     """
-    return gh.c2_Zhao09(Mv,t)
+    return gh.c2_Zhao09(Mv,t,version)
     
 #---for initializing orbit
 
-def ZZLi2020(Mhost, Msub, z):
+def orbit_from_Jiang2015(hp, sp, z, flat_2D=False):
+    """
+    Initialize the orbit of a satellite by sampling from V/V_{200c}
+    and Vr/V distributions from Jiang+2015. Subhaloes are placed
+    on initial orbital radii of r_{200c} of the host. This is an
+    extension of the Jiang+15 model, as we use the host peak height,
+    rather than host mass at z=0, in order to determine which
+    distribution to sample from.
+    
+    Syntax:
+    
+        orbit_from_Jiang2015(hp, sp, z, flat_2D)
+        
+    where
+    
+        hp: host *NFW* potential (a halo density profile object, 
+            as defined in profiles.py)
+        sp: subhalo *NFW* potential (a halo density profile object, 
+            as defined in profiles.py) 
+        z: the redshift of accretion (float)
+        flat_2D: set to True to initialize all haloes in z=0 plane, for
+                 visualization purposes
+            
+    Return:
+    
+        phase-space coordinates in cylindrical frame 
+        np.array([R,phi,z,VR,Vphi,Vz])
+
+    Note:
+        This assumes NFW profiles profile, since we're using the
+        .otherMassDefinition() method that has only been implemented
+        for NFW.
+    """
+    Mh200c, rh200c, ch200c = hp.otherMassDefinition(200.)
+    Ms200c, rs200c, cs200c = sp.otherMassDefinition(200.)
+
+    nu = co.nu(Mh200c, z, **cfg.cosmo)
+    mass_ratio = Ms200c / Mh200c
+    
+    iM = np.searchsorted(cfg.jiang_nu_boundaries, nu)
+    imM = np.searchsorted(cfg.jiang_ratio_boundaries, mass_ratio)
+
+    rand_VV200c = np.random.uniform()
+    rand_VrV = np.random.uniform()
+
+    # NOTE: Can uncomment this block of code if you don't want to sample
+    #       unbound orbits.
+    #vbyvv200c_max = np.sqrt(2.*np.abs(hp.Phi(rh200c))) / hp.Vcirc(rh200c)
+    #while True:
+    #    rand_VV200c = np.random.uniform()
+    #    V_by_V200c = splev(rand_VV200c, cfg.V_by_V200c_interps[iM][imM])
+    #    if(V_by_V200c < vbyvv200c_max): # sample until we get a bound orbit
+    #        break
+
+    V_by_V200c = splev(rand_VV200c, cfg.V_by_V200c_interps[iM][imM])
+    Vr_by_V = splev(rand_VrV, cfg.Vr_by_V_interps[iM][imM])
+    gamma = np.pi - np.arccos(Vr_by_V)
+
+    V0 = V_by_V200c * hp.Vcirc(rh200c)
+    theta = np.arccos(2.*np.random.random()-1.) # i.e., isotropy
+    zeta = 2.*np.pi*np.random.random() # i.e., uniform azimuthal 
+        # angle, zeta, of velocity vector in theta-phi-r frame 
+    sintheta = np.sin(theta)
+    costheta = np.cos(theta)
+    singamma = np.sin(gamma)
+    cosgamma = np.cos(gamma)
+    sinzeta = np.sin(zeta)
+    coszeta = np.cos(zeta)
+    if(flat_2D):
+        return np.array([
+            rh200c,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            0.,
+            V0 * cosgamma,
+            np.random.choice([-1,1]) * V0 * singamma, # clock/counter-clockwise
+            0.])
+    else:
+        return np.array([
+            rh200c * sintheta,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            rh200c * costheta,
+            V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
+            V0 * singamma * sinzeta,
+            V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
+            ])
+    
+def ZZLi2020(hp, Msub, z):
     """
     Compute the V/Vvir and infall angle of a satellite given the host
     and subhalo masses and the redshift of the merger based on the
@@ -273,11 +362,12 @@ def ZZLi2020(Mhost, Msub, z):
     
     Syntax:
     
-        ZZLi2020(Mhost, Msub, z)
+        ZZLi2020(hp, Msub, z)
         
     where
     
-        Mhost: host mass (float)
+        hp: host potential (a halo density profile object, as defined 
+            in profiles.py) 
         Msub: infalling subhalo mass (float)
         z: redshift of merger (float)
             
@@ -291,25 +381,42 @@ def ZZLi2020(Mhost, Msub, z):
         in. Hence, for consistency with our coordinate system, we return
         gamma = pi - theta, theta=0 corresponds to gamma=pi, radial infall.
     """
+    Mhost = hp.Mh
     zeta = Msub / Mhost
     nu = co.nu(Mhost, z, **cfg.cosmo)
-    a = -0.97 + (0.74 * nu) + (4.8 * zeta**0.40)
-    v_by_vvir = lognorm.rvs(s=0.22, scale=1.2)
-    eta = a * np.exp(-np.log(v_by_vvir)**2. / 0.04) # parameter b=0.2, b^2=0.04
-    one_minus_cos2t = 1.1
-    while(one_minus_cos2t > 1.): # only takes values between 0 and 1
-        one_minus_cos2t = expon.rvs(scale=1./eta)
+    A = 0.30*nu -3.33*zeta**0.43 + 0.56*nu*zeta**0.43
+    B = -1.44 + 9.60*zeta**0.43
+
+    # NOTE: Can uncomment this block of code if you don't want to sample
+    #       unbound orbits.
+    #vbyvv_max = np.sqrt(2.*np.abs(hp.Phi(hp.rh))) / hp.Vcirc(hp.rh)
+    #while True:
+    #    v_by_vvir = lognorm.rvs(s=0.22, scale=1.2)
+    #    if(v_by_vvir < vbyvv_max): # sample until we get a bound orbit
+    #        break
+
+    v_by_vvir = lognorm.rvs(s=0.20, scale=1.20)
+    eta = 0.89*np.exp(-np.log(v_by_vvir / 1.04)**2. / (2. * 0.20**2.)) + A*(v_by_vvir + 1) + B
+
+    if(eta <= 0): 
+        one_minus_cos2t = np.random.uniform()
+    else:
+        cum = np.random.uniform(0.0, 0.9999) # cut right below 1, avoids 1-cos2t>1
+        one_minus_cos2t = (-1. / eta) * np.log(1. - cum*(1. - np.exp(-eta)))
     theta = np.arccos(np.sqrt(1. - one_minus_cos2t))
+    # TODO: Can change above to repeat if it yields a NaN theta, but this is quite rare
+    assert ~np.isnan(theta), "NaN theta, 1-cos^2t=%.1f, z=%.2f, Mhost=%.2e, Msub=%.2e" %\
+            (one_minus_cos2t, z, Mhost, Msub)
     gamma = np.pi - theta
     return v_by_vvir, gamma
-def orbit_from_Li2020(hp, vel_ratio, gamma):
+def orbit_from_Li2020(hp, vel_ratio, gamma, flat_2D=False):
     """
     Initialize the orbit of a satellite, given total velocity V/Vvir 
     and infall angle.  
     
     Syntax:
     
-        orbit(hp, vel_ratio, gamma)
+        orbit(hp, vel_ratio, gamma, flat_2D)
         
     where
     
@@ -317,6 +424,8 @@ def orbit_from_Li2020(hp, vel_ratio, gamma):
             in profiles.py) 
         vel_ratio: the total velocity at infall in units of Vvir
         gamma: the angle between velocity and position vectors of subhalo
+        flat_2D: set to True to initialize all haloes in z=0 plane, for
+                 visualization purposes
             
     Return:
     
@@ -339,16 +448,25 @@ def orbit_from_Li2020(hp, vel_ratio, gamma):
     cosgamma = np.cos(gamma)
     sinzeta = np.sin(zeta)
     coszeta = np.cos(zeta)
-    return np.array([
-        r0 * sintheta,
-        np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
-        r0 * costheta,
-        V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
-        V0 * singamma * sinzeta,
-        V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
-        ])
+    if(flat_2D):
+        return np.array([
+            r0,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            0.,
+            V0 * cosgamma,
+            np.random.choice([-1,1]) * V0 * singamma, # clock/counter-clockwise
+            0.])
+    else:
+        return np.array([
+            r0 * sintheta,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            r0 * costheta,
+            V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
+            V0 * singamma * sinzeta,
+            V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
+            ])
 
-def orbit(hp,xc=1.0,eps=0.5):
+def orbit(hp,xc=1.0,eps=0.5, flat_2D=False):
     """
     Initialize the orbit of a satellite, given orbit energy proxy (xc) 
     and circularity (eps).  
@@ -365,6 +483,8 @@ def orbit(hp,xc=1.0,eps=0.5):
             energy of the orbit is E, x_c(E) is the radius of a circular 
             orbit in units of the host halo's virial radius (default=1.)
         eps: the orbital circularity parameter (default=0.5)
+        flat_2D: set to True to initialize all haloes in z=0 plane, for
+                 visualization purposes
             
     Return:
     
@@ -393,11 +513,20 @@ def orbit(hp,xc=1.0,eps=0.5):
     cosgamma = np.cos(gamma)
     sinzeta = np.sin(zeta)
     coszeta = np.cos(zeta)
-    return np.array([
-        r0 * sintheta,
-        np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
-        r0 * costheta,
-        V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
-        V0 * singamma * sinzeta,
-        V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
-        ])
+    if(flat_2D):
+        return np.array([
+            r0,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            0.,
+            V0 * cosgamma,
+            np.random.choice([-1,1]) * V0 * singamma, # clock/counter-clockwise
+            0.])
+    else:
+        return np.array([
+            r0 * sintheta,
+            np.random.random() * 2.*np.pi,  # uniformly random phi in (0,2pi)
+            r0 * costheta,
+            V0 * ( singamma * coszeta * costheta + cosgamma * sintheta ),
+            V0 * singamma * sinzeta,
+            V0 * ( cosgamma * costheta - singamma * coszeta * sintheta ),
+            ])
