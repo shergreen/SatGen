@@ -28,8 +28,15 @@ import warnings
 
 import numpy as np
 from scipy.optimize import brentq
+from scipy.interpolate import InterpolatedUnivariateSpline
 from scipy.integrate import quad
 from scipy.special import erf,gamma,gammainc,gammaincc 
+
+#---variables for NFW mass definition change interpolation
+x_interpolator = None
+x_interpolator_min = None
+x_interpolator_max = None
+
 def gamma_lower(a,x):
     """
     Non-normalized lower incomplete gamma function
@@ -241,6 +248,61 @@ class NFW(object):
         r = np.sqrt(R**2.+z**2.)
         x = r/self.rs
         return self.Phi0 * np.log(1.+x)/x
+    def otherMassDefinition(self,Delta=200.):
+        """
+        Computes the mass, radius, and concentration of the fixed,
+        physical halo under a new spherical overdensity definition.
+        Since rho0 is fixed, determines the cnew=rnew/rs that solves:
+
+            rho0 = [Delta * rhoc / 3] * (rnew/rs)**3 / f(rnew/rs)**3
+
+        Implementation based on Benedikt Diemer's COLOSSUS code.
+
+        Syntax:
+
+            .otherMassDefinition(Delta=200.)
+
+        where
+            Delta: Spherical overdensity in units of the critical
+                   overdensity at the redshift that the halo was
+                   initialized at (float).
+
+        Return:
+
+            Mnew: Mass within new overdensity (Msun, float)
+            rnew: Radius corresponding to new overdensity (kpc, float)
+            cnew: Concentration relative to new overdensity.
+        """
+
+        global x_interpolator
+        global x_interpolator_min
+        global x_interpolator_max
+
+        if x_interpolator is None:
+            table_x = np.logspace(4.0, -4.0, 1000)
+            table_y = self.f(table_x) * 3.0 / table_x**3
+            x_interpolator = InterpolatedUnivariateSpline(table_y, 
+                                                          table_x, k=3)
+            knots = x_interpolator.get_knots()
+            x_interpolator_min = knots[0]
+            x_interpolator_max = knots[-1]
+
+        dens_threshold = Delta * self.rhoc
+        y = dens_threshold / self.rho0
+
+        if(y < x_interpolator_min):
+            raise Exception("Requested overdensity %.2e cannot be evaluated\
+                             for scale density %.2e, out of range." \
+                             % (y, x_interpolator_min))
+        elif(y > x_interpolator_max):
+            raise Exception("Requested overdensity %.2e cannot be evaluated\
+                             for scale density %.2e, out of range." \
+                             % (y, x_interpolator_max))
+
+        cnew = x_interpolator(y)
+        rnew = cnew * self.rs
+        Mnew = self.M(rnew)
+        return Mnew, rnew, cnew
     def fgrav(self,R,z):
         """
         gravitational acceleration [(kpc/Gyr)^2 kpc^-1] at location (R,z)
@@ -1374,11 +1436,10 @@ class Green(object):
         self.fb = self.Mh / self.Minit
         if(self.fb < cfg.fbv_min):
             self.fb = cfg.fbv_min
-            self.Mh = cfg.Mres
-            # Note that these won't line up, but this is just to
-            # effectively destroy the subhalo if it's been stripped
-            # to be less than 10^-5 of its original mass, as it wouldn't
-            # show up on SHMFs anyway.
+            self.Mh = self.Minit * self.fb 
+            # above was changed from cfg.Mres
+            # subhaloes evolve down to m/Minit = fbv_min
+            # could also set subhalo mass to zero if below resolution
         self.log10fb = np.log10(self.fb)
         return self.Mh # just in case it was set to Mres
 
@@ -1810,7 +1871,7 @@ def fDF(potential,xv,m):
         
     Syntax:
     
-        fDF(potential,xv,m)
+        fDF(potential,xv,m,lnL_pref)
           
     where 
     
@@ -1868,14 +1929,25 @@ def fDF(potential,xv,m):
             Vrelphi = Vphi - p.Vphi(R,z) # <<< test
             Vrelz = Vz
         else: # i.e., if the potential is a halo
-            lnL = np.log(p.Mh/m)
+            if(cfg.lnL_type == 0):
+                lnL = np.log(p.Mh/m)
+            elif(cfg.lnL_type == 1):
+                lnL = np.log(1. + p.Mh/m)
+            elif(cfg.lnL_type == 2):
+                lnL = 2.
+            elif(cfg.lnL_type == 3):
+                lnL = 2.5
+            elif(cfg.lnL_type == 4):
+                lnL = 3.
+            elif(cfg.lnL_type == 5):
+                lnL = np.log(p.M(R, z) / m)
             VrelR = VR
             Vrelphi = Vphi
             Vrelz = Vz
         Vrel = np.sqrt(VrelR**2.+Vrelphi**2.+Vrelz**2.)
         Vrel = max(Vrel,cfg.eps) # safety
         X = Vrel / (cfg.Root2 * p.sigma(R,z))
-        fac_s = p.rho(R,z) * lnL * ( erf(X) - \
+        fac_s = p.rho(R,z) * (cfg.lnL_pref * lnL) * ( erf(X) - \
             cfg.TwoOverRootPi*X*np.exp(-X**2.) ) / Vrel**3 
         sR += fac_s * VrelR 
         sphi += fac_s * Vrelphi 
