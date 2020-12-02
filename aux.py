@@ -365,8 +365,8 @@ def add_cyl_vecs(xv1, xv2):
     Vy1 = np.sin(phi1)*VR1 + np.cos(phi1)*Vphi1
     Vx2 = np.cos(phi2)*VR2 - np.sin(phi2)*Vphi2
     Vy2 = np.sin(phi2)*VR2 + np.cos(phi2)*Vphi2
-    Vxnew = np.sqrt(Vx1**2. + Vx2**2.)
-    Vynew = np.sqrt(Vy1**2. + Vy2**2.)
+    Vxnew = Vx1 + Vx2
+    Vynew = Vy1 + Vy2
     VRnew = np.cos(phinew)*Vxnew + np.sin(phinew)*Vynew
     Vphinew = -np.sin(phinew)*Vxnew + np.cos(phinew)*Vynew
     xvnew[3] = VRnew
