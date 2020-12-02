@@ -1434,11 +1434,11 @@ class Green(object):
         # let's make sure that fb > 1e-5
         self.Mh = Mnew
         self.fb = self.Mh / self.Minit
-        if(self.fb < cfg.fbv_min):
-            self.fb = cfg.fbv_min
+        if(self.fb < cfg.phi_res):
+            self.fb = cfg.phi_res
             self.Mh = self.Minit * self.fb 
             # above was changed from cfg.Mres
-            # subhaloes evolve down to m/Minit = fbv_min
+            # subhaloes evolve down to m/Minit = phi_res
             # could also set subhalo mass to zero if below resolution
         self.log10fb = np.log10(self.fb)
         return self.Mh # just in case it was set to Mres

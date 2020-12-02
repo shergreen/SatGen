@@ -29,6 +29,7 @@ ns = 1.
 M0 = 1e12 # [Msun] [DEFAULT]: Typically changed in TreeGen_Sub
 Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
            # (Mres/M0 = psi_{res})
+psi_res = 10**-5 # Resolution limit of merger tree
 z0 = 0. # [DEFAULT]: Typically changed in TreeGen_Sub
 zmax = 20.
 G0 = 0.6353 
@@ -36,9 +37,11 @@ gamma1 = 0.1761
 gamma2 = 0.0411
 
 #---for satellite evolution 
+phi_res = 10**-5 # Resolution in m/m_{acc}
 Rres = 0.001 # [kpc] spatial resolution (Over-written in SubEvo)
 lnL_pref = 0.75 # multiplier for Coulomb logarithm (fiducial 0.75)
 lnL_type = 0 # indicates using log(Mh/Ms) (instantaneous)
+evo_mode = 'arbres' # or 'withering'
 
 ############################# constants #################################
 
@@ -159,6 +162,7 @@ fb_vals_int = np.logspace(-5, 0, nfb)
 r_vals_int = np.logspace(-5.5, 1., nr)
 cs_vals_int = np.logspace(0, np.log10(40), ncs)
 fbv_min = np.min(fb_vals_int) # Same as phi_{res} in paper; fiducial of 10^-5
+assert phi_res >= fbv_min, "phi_res can't be smaller than fbv_min=10^-5"
 fbv_max = np.max(fb_vals_int)
 rv_min = np.min(r_vals_int)
 rv_max = np.max(r_vals_int)
