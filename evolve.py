@@ -297,7 +297,8 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     if lt<sp.rh: 
         dm = alpha * (sp.Mh-sp.M(lt)) * dt/pr.tdyn(potential,xv[0],xv[2])
         dm = max(dm,0.) # avoid negative dm
-        m = max(sp.Mh-dm,cfg.Mres)
+        m = max(sp.Mh-dm,cfg.fbv_min*sp.Minit) 
+        # changed from max(sp.Mh-dm,cfg.Mres), which is used for fixed Mres
     else:
         m = sp.Mh
     return m,lt
