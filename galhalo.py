@@ -170,7 +170,7 @@ def c2_Zhao09(Mv,t,version='zhao'):
     
     Syntax:
     
-        c2_Zhao09(Mv,t,type)
+        c2_Zhao09(Mv,t,version)
         
     where
     
