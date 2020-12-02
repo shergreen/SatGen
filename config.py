@@ -13,7 +13,7 @@
 import cosmo as co
 
 import numpy as np
-from scipy.interpolate import interp1d, RectBivariateSpline
+from scipy.interpolate import interp1d, RectBivariateSpline, splrep
 
 ########################## user control #################################
 
@@ -26,21 +26,24 @@ s8 = 0.8
 ns = 1.
 
 #---for merger tree (the parameters for the Parkinson+08 algorithm)
-M0 = 1e12 
-z0 = 0.
+M0 = 1e12 # [Msun] [DEFAULT]: Typically changed in TreeGen_Sub
+Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
+           # (Mres/M0 = psi_{res})
+z0 = 0. # [DEFAULT]: Typically changed in TreeGen_Sub
 zmax = 20.
 G0 = 0.6353 
 gamma1 = 0.1761
 gamma2 = 0.0411
 
 #---for satellite evolution 
-Mres = 1e4 # [Msun] mass resolution
-Rres = 0.001 # [kpc] spatial resolution
+Rres = 0.001 # [kpc] spatial resolution (Over-written in SubEvo)
+lnL_pref = 0.75 # multiplier for Coulomb logarithm (fiducial 0.75)
+lnL_type = 0 # indicates using log(Mh/Ms) (instantaneous)
 
 ############################# constants #################################
 
 G = 4.4985e-06 # gravitational constant [kpc^3 Gyr^-2 Msun^-1]
-rhoc0 = 277.5 # [h^2 Msun kpc^-3] # NOTE: this is just for a specific cosmology... should be computed automatically from cosmology above
+rhoc0 = 277.5 # [h^2 Msun kpc^-3]
 
 ln10 = np.log(10.)
 Root2 = np.sqrt(2.)
@@ -155,7 +158,7 @@ fb_vals_int = np.logspace(-5, 0, nfb)
 # radius.
 r_vals_int = np.logspace(-5.5, 1., nr)
 cs_vals_int = np.logspace(0, np.log10(40), ncs)
-fbv_min = np.min(fb_vals_int)
+fbv_min = np.min(fb_vals_int) # Same as phi_{res} in paper; fiducial of 10^-5
 fbv_max = np.max(fb_vals_int)
 rv_min = np.min(r_vals_int)
 rv_max = np.max(r_vals_int)
@@ -169,5 +172,35 @@ fb_cs_interps_sigma = []
 # TODO: Decide if switching to linear-space from log-space gives
 # a speed-up sufficiently worth it..?
 for i in range(0, nr):
-    fb_cs_interps_mass.append(RectBivariateSpline(log_fb_vals_int, log_cs_vals_int, gvdb_mm[:,:,i]))
-    fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int, log_cs_vals_int, gvdb_sm[:,:,i]))
+    fb_cs_interps_mass.append(RectBivariateSpline(log_fb_vals_int,
+                                                  log_cs_vals_int,
+                                                  gvdb_mm[:,:,i]))
+    fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int,
+                                                   log_cs_vals_int,
+                                                   gvdb_sm[:,:,i]))
+
+# Jiang+15 subhalo orbital model parameters (Table 2)
+# rows correspond to host mass (i.e., peak height)
+# columns correspond to msub/mhost
+print('>>> Building interpolator for Jiang+15 orbit sampler...')
+ncdf_pts = 100
+V_by_V200c_arr = np.linspace(0., 2.6, ncdf_pts)
+Vr_by_V_arr = np.linspace(0., 1., ncdf_pts)
+jiang_cdfs = np.load('etc/jiang_cdfs.npz')
+V_by_V200c_cdf = jiang_cdfs['V_by_V200c']
+Vr_by_V_cdf = jiang_cdfs['Vr_by_V']
+
+V_by_V200c_interps = []
+Vr_by_V_interps = []
+
+for i in range(0,3):
+    V_by_V200c_interps.append([])
+    Vr_by_V_interps.append([])
+    for j in range(0,3):
+        V_by_V200c_interps[i].append(splrep(V_by_V200c_cdf[i,j], 
+                                            V_by_V200c_arr))
+        Vr_by_V_interps[i].append(splrep(Vr_by_V_cdf[i,j],
+                                         Vr_by_V_arr))
+
+jiang_nu_boundaries = co.nu([5e12, 5e13], 0., **cosmo)
+jiang_ratio_boundaries = np.array([0.005, 0.05])
