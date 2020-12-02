@@ -31,7 +31,7 @@ from os import path
 #---target halo and desired resolution 
 lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
 z0 = 0.
-lgMres = lgM0 - np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
+lgMres = lgM0 + np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
 Ntree = 2000
 
 #---orbital parameter sampler preference

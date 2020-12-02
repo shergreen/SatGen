@@ -108,7 +108,7 @@ def loop(file):
     #   Defunct, we no longer use an Rres; all subhaloes are evolved
     #   until their mass falls below resolution limit
     min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
-    cfg.Rres = min(0.1, min_rvir * Rres_factor)
+    cfg.Rres = min(0.1, min_rvir * Rres_factor) # Never larger than 100 pc
 
     #---list of potentials and orbits for each branch
     #   additional, mass of ejected subhaloes stored in ejected_mass
@@ -163,9 +163,9 @@ def loop(file):
                         orbits[id] = orbit(xva)
                         trelease[id] = ta
 
-                        if evo_type == 'arbres':
+                        if cfg.evo_mode == 'arbres':
                             min_mass[id] = cfg.phi_res * ma
-                        elif evo_type == 'withering':
+                        elif cfg.evo_mode == 'withering':
                             min_mass[id] = cfg.psi_res * M0
 
                     #---main loop for evolution
@@ -343,7 +343,7 @@ def loop(file):
     #---on-screen prints
     m0 = mass[:,0][1:]
     
-    msk = (m0 > 1e-4*M0) & (m0 < M0) & order[:,0] == 1
+    msk = (m0 > cfg.psi_res*M0) & (m0 < M0) & order[1:,0] == 1
     fsub = m0[msk].sum() / M0
     
     MAH = mass[0,:]
