@@ -41,10 +41,6 @@ warnings.simplefilter("ignore", UserWarning)
 datadir = "./OUTPUT_TREE/"
 outdir = "./OUTPUT_SAT/"
 
-# TODO: Need to make some changes up here to properly work with both options:
-# 1. Subhalo mass limit is same as merger tree resolution limit
-# 2. Subhalo mass limit is specified by phi_res
-
 Rres_factor = 10**-3 # (Defunct)
 
 #---stripping efficiency type
