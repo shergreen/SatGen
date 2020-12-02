@@ -8,6 +8,9 @@
 # Arthur Fangzhou Jiang 2016-2017 Hebrew University
 # Arthur Fangzhou Jiang 2020 Caltech
 # Sheridan Beckwith Green 2020 Yale University
+# -- Changed loop order so that redshift is the outermost loop,
+#    which enables mass of ejected subhaloes to be removed from
+#    the corresponding host; necessary for mass conservation
 
 ######################## set up the environment #########################
 
@@ -34,14 +37,24 @@ warnings.simplefilter("ignore", UserWarning)
 
 ########################### user control ################################
 
-datadir = "./OUTPUT_TREE/" 
+
+datadir = "./OUTPUT_TREE/"
 outdir = "./OUTPUT_SAT/"
 
-cfg.Mres = 1e8 # <<< using that in TreeGen.py is enough
-cfg.Rres = 0.1 # [kpc] <<< use 0.001 if want to resolve UCDs
+# TODO: Need to make some changes up here to properly work with both options:
+# 1. Subhalo mass limit is same as merger tree resolution limit
+# 2. Subhalo mass limit is specified by phi_res
 
-# TODO: Add a flag for the stripping efficiency version (0.55 vs. w/ c-dependence)
-# TODO: Add a flag for the version of dynamical friction that we use. (just make it a prefactor stored in the config file)
+Rres_factor = 10**-3 # (Defunct)
+
+#---stripping efficiency type
+alpha_type = 'conc' # 'fixed' or 'conc'
+
+#---dynamical friction strength
+cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
+
+#---evolution mode (resolution limit in m/m_{acc} or m/M_0)
+cfg.evo_mode = 'arbres' # or 'withering'
 
 ########################### evolve satellites ###########################
 
@@ -52,6 +65,7 @@ for filename in os.listdir(datadir):
         files.append(os.path.join(datadir, filename))
 files.sort()
 
+
 print('>>> Evolving subhaloes ...')
 
 #---
@@ -61,7 +75,16 @@ def loop(file):
     """
     Replaces the loop "for file in files:", for parallelization.
     """
-  
+
+    # skip if we already ran this one and are re-running
+    # uncompleted trees on a second pass-through
+    outfile = outdir + file[len(datadir):]
+    if(os.path.exists(outfile)):
+        # NOTE: This will throw error if serial
+        # Change the below to "continue" for serial
+        return
+        #continue
+
     time_start_tmp = time.time()  
     
     #---load trees
@@ -84,205 +107,231 @@ def loop(file):
     #---identify the roots of the branches
     izroot = mass.argmax(axis=1) # root-redshift ids of all the branches
     idx = np.arange(mass.shape[0]) # branch ids of all the branches
-    levels = np.unique(order[order>0]) # all >0 levels in the tree
-    
-    for level in levels: # loop over levels from low to high
-    
-        for id in idx: # loop over branches
-            
-            iza = izroot[id]
-            if order[id,iza]!=level: continue # level by level
-            
-            #---initialize
-            
-            # read satellite properties at accretion
-            za = redshift[iza]
-            ta = CosmicTime[iza]
-            Dva = VirialOverdensity[iza]
-            ma = mass[id,iza] # initial mass that we will use for f_b
-            ka = order[id,iza]
-            ipa = ParentID[id,iza]
-            c2a = concentration[id,iza]
-            xva = coordinates[id,iza,:]
-            
-            # initialize satellite and orbit
-            s = Green(ma,c2a,Delta=Dva,z=za)
-            o = orbit(xva) # Make sure to change orbit init in TreeGen
-            xv = o.xv
-            
-            # initialize instantaneous quantities to be updated
-            m = ma
-            m_old = ma
-            r = np.sqrt(xva[0]**2+xva[2]**2)
-            k = ka 
-            ip = ipa
-            trelease = ta # cosmic time at lastest release
-            #tprevious = ta # cosmic time at previous timestep
-            tcurrent = ta # cosmic time at current timestep
+    levels = np.unique(order[order>=0]) # all >0 levels in the tree
+    izmax = mass.shape[1] - 1 # highest redshift index
 
-            #---evolve
-            #for iz in np.arange(iza)[::-1]: # loop over time to evolve
-            for iz in np.arange(iza, 0, -1): # loop over time to evolve
-                # NOTE: we now start at iza, rather than iza-1
-                # NOTE: we now stop at 1, rather than 0
+    #---get smallest host rvir from tree
+    #   Defunct, we no longer use an Rres; all subhaloes are evolved
+    #   until their mass falls below resolution limit
+    min_rvir = VirialRadius[0, np.argwhere(VirialRadius[0,:] > 0)[-1][0]]
+    cfg.Rres = min(0.1, min_rvir * Rres_factor)
 
-                iznext = iz - 1                
-                z = redshift[iz]
-                #tcurrent = CosmicTime[iz]
-                tnext = CosmicTime[iznext]
-                
-                #---time since in current host
-                #t = tcurrent - trelease
-                t = tnext - trelease
+    #---list of potentials and orbits for each branch
+    #   additional, mass of ejected subhaloes stored in ejected_mass
+    #   to be removed from corresponding host at next timestep
+    potentials = [0] * mass.shape[0]
+    orbits = [0] * mass.shape[0]
+    trelease = np.zeros(mass.shape[0])
+    ejected_mass = np.zeros(mass.shape[0])
 
-                #---timestep
-                #dt = tcurrent - tprevious
-                dt = tnext - tcurrent
-                
-                #---update host potential
-                Mp  = mass[ip,iz]
-                if(iz >= izroot[ip]):
-                    c2p = concentration[ip,iz]
-                    Dp  = VirialOverdensity[iz]
-                    if(iz == izroot[ip]): # final point before accretion
-                        # NOTE: This is the last redshift that concentration
-                        # and virial radius are computed, as they become
-                        # meaningless afterwards once the host profile
-                        # begins to be stripped.
-                        p   = Green(Mp,c2p,Delta=Dp,z=z)
-                    else: # host hasn't been accreted yet, just grow NFW
-                        p   = NFW(Mp,c2p,Delta=Dp,z=z)
-                else: # host is itself a subhalo, update mass and f_b
-                    p.update_mass(Mp)
+    #---list of minimum masses, below which we stop evolving the halo
+    M0 = mass[0,0]
+    min_mass = np.zeros(mass.shape[0])
 
-               
-                # compute alpha for matrix
-                alpha = ev.alpha_from_c2(p.ch, s.ch)
-                
-                #---evolve satellite
-                if m>cfg.Mres:
+    #---evolve
+    for iz in np.arange(izmax, 0, -1): # loop over time to evolve
+        iznext = iz - 1                
+        z = redshift[iz]
+        tcurrent = CosmicTime[iz]
+        tnext = CosmicTime[iznext]
+        dt = tnext - tcurrent
+        Dv = VirialOverdensity[iz]
+
+        for level in levels: #loop from low-order to high-order systems
+            for id in idx: # loop over branches
+                if order[id,iz]!=level: continue # level by level
+                if(iz <= izroot[id]):
+                    if(iz == izroot[id]): # accretion happens at this timestep
+                        # initialize Green profile and orbit
+
+                        za = z
+                        ta = tcurrent
+                        Dva = Dv
+                        ma = mass[id,iz] # initial mass that we will use for f_b
+                        c2a = concentration[id,iz]
+                        xva = coordinates[id,iz,:]
+
+                        # some edge case produces nan in velocities in TreeGen
+                        # if so, print warning and mass fraction lost
+                        if(np.any(np.isnan(xva))):
+                            print('    WARNING: NaNs detected in init xv of id %d'\
+                                % id)
+                            print('    Mass fraction of tree lost: %.1e'\
+                                % (ma/mass[0,0]))
+                            mass[id,:] = -99.
+                            coordinates[id,:,:] = 0.
+                            idx = np.delete(idx, np.argwhere(idx == id)[0])
+                            # this is an extremely uncommon event, but should
+                            # eventually be fixed
+                            continue
+
+                        potentials[id] = Green(ma,c2a,Delta=Dva,z=za)
+                        orbits[id] = orbit(xva)
+                        trelease[id] = ta
+
+                        if evo_type == 'arbres':
+                            min_mass[id] = cfg.phi_res * ma
+                        elif evo_type == 'withering':
+                            min_mass[id] = cfg.psi_res * M0
+
+                    #---main loop for evolution
+
+                    # the p,s,o objects are updated in-place in their arrays
+                    # unless the orbit is replaced with a new object when released
+                    ip = ParentID[id,iz]
+                    p = potentials[ip]
+                    s = potentials[id]
+
+                    # update mass of subhalo object based on mass-loss in previous snapshot
+                    # we wait to do it until now so that the pre-stripped subhalo can be used
+                    # in the evolution of any higher-order subhaloes
+                    # We also strip off the mass of any ejected systems
+                    # the update_mass function handles cases where we fall below resolution limit
+                    if(s.Mh > min_mass[id]):
+                        if(ejected_mass[id] > 0):
+                            mass[id,iz] -= ejected_mass[id]
+                            ejected_mass[id] = 0
+                            mass[id,iz] = max(mass[id,iz], cfg.phi_res*s.Minit)
+
+                        s.update_mass(mass[id,iz])
+                        rte = s.rte()
+
+                    o = orbits[id]
+                    xv = orbits[id].xv
+                    m = s.Mh
+                    m_old = m
+                    r = np.sqrt(xv[0]**2+xv[2]**2)
+
+                    #---time since in current host
+                    t = tnext - trelease[id]
+
+                    # Order should always be one higher than parent unless 
+                    # ejected,in which case it should be the same as parent
+                    k = order[ip,iznext] + 1
+
+                    # alpha: stripping efficiency
+                    if(alpha_type == 'fixed'):
+                        alpha = 0.55
+                    elif(alpha_type == 'conc'):
+                        alpha = ev.alpha_from_c2(p.ch, s.ch)
+
+                    #---evolve satellite
+                    # as long as the mass is larger than resolution limit
+                    if m > min_mass[id]:
+
+                        # evolve subhalo properties
+                        m,lt = ev.msub(s,p,xv,dt,choice='King62',
+                            alpha=alpha)
+
+                    else: # we do nothing about disrupted satellite, s.t.,
+                        # its properties right before disruption would be 
+                        # stored in the output arrays
+                        pass
+
+                    #---evolve orbit
+                    if m > min_mass[id]:
+                        # NOTE: We previously had an additional check on r>Rres
+                        # here, where Rres = 10^-3 Rvir(z), but I removed it
+                        # All subhalo orbits are evolved until their mass falls
+                        # below the resolution limit.
+                        # NOTE: No use integrating orbit any longer once the halo
+                        # is disrupted, this just slows it down
                     
-                    # evolve subhalo properties
-                    m,lt = ev.msub(s,p,xv,dt,choice='King62',
-                        alpha=alpha)
-                    m = s.update_mass(m)
-                    rte = s.rte()
+                        tdyn = p.tdyn(r)
+                        o.integrate(t,p,m_old)
+                        xv = o.xv # note that the coordinates are updated 
+                        # internally in the orbit instance "o" when calling
+                        # the ".integrate" method, here we assign them to 
+                        # a new variable "xv" only for bookkeeping
+                        
+                    else: # i.e., the satellite has merged to its host, so
+                        # no need for orbit integration; to avoid potential 
+                        # numerical issues, we assign a dummy coordinate that 
+                        # is almost zero but not exactly zero
+                        tdyn = p.tdyn(cfg.Rres)
+                        xv = np.array([cfg.Rres,0.,0.,0.,0.,0.])
+
+                    r = np.sqrt(xv[0]**2+xv[2]**2)
+                    m_old = m
+
+
+                    #---if order>1, determine if releasing this high-order 
+                    #   subhalo to its grandparent-host, and if releasing,
+                    #   update the orbit instance
+                    if k>1:
                     
-                
-                else: # we do nothing about disrupted satellite, s.t.,
-                    # its properties right before disruption would be 
-                    # stored in the output arrays
-                    
-                    pass
-                
-                #---evolve orbit
-                if r>cfg.Rres:
-                
-                    tdyn = p.tdyn(r)
-                    o.integrate(t,p,m_old)
-                    xv = o.xv # note that the coordinates are updated 
-                    # internally in the orbit instance "o" when calling
-                    # the ".integrate" method, here we assign them to 
-                    # a new variable "xv" only for bookkeeping
-                    #print("just after integrate", np.sqrt(xv[0]**2+xv[2]**2))
-                    
-                else: # i.e., the satellite has merged to its host, so
-                    # no need for orbit integration; to avoid potential 
-                    # numerical issues, we assign a dummy coordinate that 
-                    # is almost zero but not exactly zero
-                    tdyn = p.tdyn(cfg.Rres)
-                
-                    xv = np.array([cfg.Rres,0.,0.,0.,0.,0.])
+                        if (r > VirialRadius[ip,iz]) & (iz <= izroot[ip]): 
+                            # <<< Release condition:
+                            # 1. Host halo is already within a grandparent-host
+                            # 2. Instant orbital radius is larger than the host
+                            # TIDAL radius (note that VirialRadius also contains
+                            # the tidal radii for the host haloes once they fall
+                            # into a grandparent-host)
+                            # 3. (below) We compute the fraction of:
+                            #             alpha * dynamical time
+                            # corresponding to this dt, and release with
+                            # probability dt / (alpha * dynamical time) 
 
-                r = np.sqrt(xv[0]**2+xv[2]**2)
-                m_old = m
+                            # Compute probability of being ejected
+                            odds = np.random.rand()
+                            dyntime_frac = dt / (alphas[ip,iz] * tdyns[ip,iz])
+                            if(odds < dyntime_frac):
+                                if(ParentID[ip,iz] == ParentID[ip,iznext]):
+                                    # host wasn't also released at same time
+                                    # New coordinates at next time are the
+                                    # updated subhalo coordinates plus the updated
+                                    # host coordinates inside of grandparent
+                                    xv = aux.add_cyl_vecs(xv,coordinates[ip,iznext,:])
+                                else:
+                                    xv = aux.add_cyl_vecs(xv,coordinates[ip,iz,:])
+                                    # This will be extraordinarily rare, but just
+                                    # a check in case so that the released order-k
+                                    # subhalo isn't accidentally double-released
+                                    # in terms of updated coordinates, but not
+                                    # in terms of new host ID.
+                                orbits[id] = orbit(xv) # update orbit object
+                                k = order[ip,iz] # update instant order to the same as the parent
+                                ejected_mass[ip] += m 
+                                # add updated subhalo mass to a bucket to be removed from host
+                                # at start of next timestep
+                                ip = ParentID[ip,iz] # update parent id
+                                trelease[id] = tnext # update release time
 
+                    #---update the arrays for output
+                    mass[id,iznext] = m
+                    order[id,iznext] = k
+                    ParentID[id,iznext] = ip
+                    try:
+                        VirialRadius[id,iznext] = lt # storing tidal radius
+                    except UnboundLocalError:
+                        # TreeGen gives a few subhaloes with root mass below the
+                        # given resolution limit so some subhaloes will never get
+                        # an lt assigned if they aren't evolved one step. This can
+                        # be fixed by lowering the resolution limit of SubEvo
+                        # relative to TreeGen by some tiny epsilon, say 0.05 dex
+                        print("No lt for id ", id, "iz ", iz, "masses ",
+                              np.log10(mass[id,iz]), np.log10(mass[id,iznext]), file)
+                        return
 
-                #---if order>1, determine if releasing this high-order 
-                #   subhalo to its grandparent-host, and if releasing,
-                #   update the orbit instance
-                if k>1:
-                
-                    if (r > VirialRadius[ip,iz]) & (iz <= izroot[ip]): 
-                        # <<< Release condition:
-                        # 1. Host halo is already within a grandparent-host
-                        # 2. Instant orbital radius is larger than the host
-                        # TIDAL radius (note that VirialRadius also contains
-                        # the tidal radii for the host haloes once they fall
-                        # into a grandparent-host)
-                        # 3. (below) We compute the fraction of:
-                        #             alpha * dynamical time
-                        # corresponding to this dt, and release with
-                        # probability dt / (alpha * dynamical time) 
-                        # TODO: Consider how to deal with this criteria
-                        # integrated over multiple timesteps outside of
-                        # the tidal radius..
+                    # NOTE: We store tidal radius in lieu of virial radius
+                    # for haloes after they start getting stripped
+                    GreenRte[id,iz] = rte 
+                    coordinates[id,iznext,:] = xv
 
-                        # Compute probability of being ejected
-                        odds = np.random.rand()
-                        dyntime_frac = dt / (alphas[ip,iz] * tdyns[ip,iz])
-                        if(odds < dyntime_frac):
-                            if(ParentID[ip,iz] == ParentID[ip,iznext]):
-                                # host wasn't also released at same time
-                                # New coordinates at next time are the
-                                # updated subhalo coordinates plus the updated
-                                # host coordinates inside of grandparent
-                                xv = aux.add_cyl_vecs(xv,coordinates[ip,iznext,:])
-                                # NOTE: Changed this to pick up the 
-                                # orbital coordinates of the host at the
-                                # next timestep PLUS the orbital coordinates
-                                # of the sub w.r.t. the host
-                            else:
-                                xv = aux.add_cyl_vecs(xv,coordinates[ip,iz,:])
-                                # This will be extraordinarily rare, but just
-                                # a check in case so that the released order-k
-                                # subhalo isn't accidentally double-released
-                                # in terms of updated coordinates, but not
-                                # in terms of new host ID.
-                            o = orbit(xv)
-                            k = order[ip,iz] # update instant order to the same as the parent
+                    # NOTE: the below two are quantities at current timestep
+                    # instead, since only used for host release criteria
+                    # This won't be output since only used internally
+                    alphas[id,iz] = alpha
+                    tdyns[id,iz] = tdyn
 
-                            ip = ParentID[ip,iz] # update parent id
-                            izp = izroot[ip]
-                            Mp = mass[ip,izp]
-                            c2p = concentration[ip,izp]
-                            Dp  = VirialOverdensity[izp]
-                            p = Green(Mp,c2p,Delta=Dp,z=redshift[izp])
-                            # NOTE: Mass will be updated next time, so don't
-                            # need to do it yet
-                            # Also, if new host hasn't merged yet, it will be
-                            # converted to an NFW at start of next step.
-                            #trelease = tcurrent # update release time
-                            trelease = tnext # update release time
-                
-                #---update the arrays for output
-                mass[id,iznext] = m 
-                order[id,iznext] = k
-                ParentID[id,iznext] = ip
-                VirialRadius[id,iznext] = lt # storing tidal radius
-                # NOTE: We won't be storing concentrations
-                # NOTE: We store tidal radius in lieu of virial radius
-                # for haloes after they start getting stripped
-                GreenRte[id,iznext] = rte
-                coordinates[id,iznext,:] = xv
+                else: # before accretion, halo is an NFW profile
+                    if(concentration[id,iz] > 0): 
+                        # the halo has gone above tree mass resolution
+                        # different than SatEvo mass resolution by small delta
+                        potentials[id] = NFW(mass[id,iz],concentration[id,iz],
+                                             Delta=VirialOverdensity[iz],z=redshift[iz])
 
-                # note that the below two are quantities
-                # at current timestep instead, since only used for
-                # host release criteria
-                # This won't be output since only used internally
-                alphas[id,iz] = alpha
-                tdyns[id,iz] = tdyn
-                
-                #---update tprevious
-                #tprevious = tcurrent
-                tcurrent = tnext
-            
-                # <<< test
-                #print('    id=%5i,k=%2i,ip=%5i,z=%6.2f,r=%9.4f,log(m)=%6.2f,D=%7.1f,c2=%6.2f,s001=%5.2f,log(ms)=%6.2f,le=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
-                #    (id,k,ip,z,r,np.log10(m),D,c2,s001,np.log10(ms),le, xv[0],xv[1],xv[2],xv[3],xv[4],xv[5]))
-    
     #---output
-    outfile = outdir + file[len(datadir):]
     np.savez(outfile, 
         redshift = redshift,
         CosmicTime = CosmicTime,
@@ -291,18 +340,16 @@ def loop(file):
         ParentID = ParentID,
         VirialRadius = VirialRadius,
         GreenRte = GreenRte,
-        # this contains values during stripping, -99 prior to stripping and 
-        # once the halo reaches Mres, i.e. "disrupted" -- 
-        # for visualization purposes
+        # this contains values during stripping, -99 prior to stripping and
+        # once the halo falls below the resolution limit
         concentration = concentration, # this is unchanged from TreeGen output
         coordinates = coordinates,
         )
     
     #---on-screen prints
-    M0 = mass[0,0]
     m0 = mass[:,0][1:]
     
-    msk = (m0 > 1e-4*M0) & (m0 < M0) # <<< latter condition to be removed 
+    msk = (m0 > 1e-4*M0) & (m0 < M0) & order[:,0] == 1
     fsub = m0[msk].sum() / M0
     
     MAH = mass[0,:]
@@ -312,12 +359,13 @@ def loop(file):
     time_end_tmp = time.time()
     print('    %s: %5.2f min, z50=%5.2f,fsub=%8.5f'%\
         (outfile,(time_end_tmp-time_start_tmp)/60., z50,fsub))
-    #sys.exit() # <<< test
+    sys.stdout.flush()
 
 #---for parallelization, comment for testing in serial mode
 if __name__ == "__main__":
-    pool = Pool(cpu_count()) # use all cores
-    pool.map(loop, files)
+    Ncores = int(sys.argv[1])
+    pool = Pool(Ncores) # use as many as requested
+    pool.map(loop, files, chunksize=1)
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))

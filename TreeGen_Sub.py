@@ -1,7 +1,7 @@
 ################################ TreeGen_Sub ################################
 
 # Generate halo merger trees using the Parkinson et al. (2008) algorithm.
-# Slightly modified from TreeGen to only produce quantities necessary
+# Slightly modified from original TreeGen to only produce quantities necessary
 # for dark matter subhalo evolution. Additionally, this version introduces
 # Zhao-Zhou Li's infall orbital parameter distribution.
 
@@ -24,19 +24,18 @@ import numpy as np
 import time 
 from multiprocessing import Pool, cpu_count
 import sys
+from os import path
 
 ############################# user control ##############################
 
 #---target halo and desired resolution 
-lgM0 = 12.3
+lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
 z0 = 0.
-#lgMres = 8.
-#lgMres = 9.
-lgMres = lgM0 - 3.7
-Ntree = 5000
+lgMres = lgM0 - np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
+Ntree = 2000
 
 #---orbital parameter sampler preference
-optype =  'wetzel' # 'zzli' or 'wetzel'
+optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
 
 #---concentration model preference
 conctype = 'zhao' # 'zhao' or 'vdb'
@@ -56,6 +55,11 @@ def loop(itree):
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
     """
+
+    # check if this one has already been ran
+    if path.exists(outfile1%(itree,lgM0)):
+        return
+
     time_start_tmp = time.time()
     
     np.random.seed() # [important!] reseed the random number generator
@@ -138,6 +142,10 @@ def loop(itree):
         # coarser output timesteps, cfg.zsample     
         Msample,zsample = aux.downsample(M,z,cfg.zsample)
         iz = aux.FindClosestIndices(cfg.zsample,zsample)
+        if(isinstance(iz,np.int64)):
+            iz = np.array([iz]) # avoids error in loop below
+            zsample = np.array([zsample])
+            Msample = np.array([Msample])
         izleaf = aux.FindNearestIndex(cfg.zsample,zleaf)
         # Note: zsample[j] is same as cfg.zsample[iz[j]]
         
@@ -169,12 +177,15 @@ def loop(itree):
             Mp  = mass[ip,iz[0]]
             c2p = concentration[ip,iz[0]]
             hp  = NFW(Mp,c2p,Delta=cfg.Dvsample[iz[0]],z=zsample[0])
-            if(optype == 'wetzel'):
+            if(optype == 'zentner'):
                 eps = 1./np.pi*np.arccos(1.-2.*np.random.random())
                 xv  = init.orbit(hp,xc=1.,eps=eps)
             elif(optype == 'zzli'):
-                vel_ratio, gamma = init.ZZLi2020(hp.Mh, Msample[0], zsample[0])
+                vel_ratio, gamma = init.ZZLi2020(hp, Msample[0], zsample[0])
                 xv = init.orbit_from_Li2020(hp, vel_ratio, gamma)
+            elif(optype == 'jiang'):
+                sp = NFW(Msample[0],c2[0],Delta=cfg.Dvsample[iz[0]],z=zsample[0])
+                xv = init.orbit_from_Jiang2015(hp,sp,zsample[0])
         
         # <<< test
         #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
@@ -231,8 +242,9 @@ def loop(itree):
         %(itree,Nbranch,k,time_end_tmp-time_start_tmp))
 
 if __name__ == "__main__":
-    pool = Pool(cpu_count()) # use all cores
-    pool.map(loop, range(Ntree))
+    Ncores = int(sys.argv[1])
+    pool = Pool(Ncores) # use as many as requested
+    pool.map(loop, range(Ntree), chunksize=1)
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
