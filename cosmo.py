@@ -1031,3 +1031,48 @@ def dNdlnmaM0_1st(x,gamma1,gamma2,alpha1,alpha2,beta,zeta):
         zeta: parameter for the steepness of decay
     """
     return (gamma1*x**alpha1+gamma2*x**alpha2)*np.exp(-beta*x**zeta)
+
+def fsub_pred(M0, z0, level=1, **cosmo):
+    """
+    Predicted value for f_{sub} based on N_dyn, the dynamical age of
+    a halo. Uses the method described in Section 4.2 of Jiang &
+    van den Bosch (2016), "Paper 1".
+        
+    Syntax:
+    
+        fsub_pred(M0, z0,level,**cosmo)
+        
+    where
+    
+        M0: halo mass at redshift of observation (float)
+        z0: halo redshift of observation (float)
+        level: 1 or 2, i.e., the fraction of mass bound into
+               level 1+ subhaloes or level 2+ subhaloes
+        cosmo: dictionary of cosmological parameters
+
+    Note:
+
+        The Ndyn function called computes the number of dynamical
+        times between two redshifts, but the dynamical time differs
+        from that defined in Jiang & van den Bosch (2016) by a factor
+        of pi/2.
+    """
+    Om = cosmo['omega_M_0']
+    OL = cosmo['omega_lambda_0']
+    h = cosmo['h']
+    f = 0.5
+    alpha_f = 0.815 * np.exp(-2. * f**3.) / f**0.707
+    omegat_f = np.sqrt(2.*np.log(alpha_f + 1.))
+    rhs = deltac(z0,Om) + omegat_f * np.sqrt(
+          sigma(f*M0,**cosmo)**2. - sigma(M0,**cosmo)**2.)
+    eqn = lambda zf: deltac(zf,Om) - rhs
+    zform = brentq(eqn, 0., 1000., 
+            xtol=1e-5, rtol=1e-3, maxiter=100)
+    Nt = Ndyn(zform,z0,h,Om,OL) / (np.pi / 2.)
+
+    if(level == 1):
+        return 0.325/Nt**0.6 - 0.075
+    elif(level == 2):
+        return 0.0461/Nt**1.3 - 0.0035
+    else:
+        sys.exit("Invalid subhalo level chosen for fsub!")
