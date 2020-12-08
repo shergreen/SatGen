@@ -262,13 +262,13 @@ def loop(file):
                             # the tidal radii for the host haloes once they fall
                             # into a grandparent-host)
                             # 3. (below) We compute the fraction of:
-                            #             alpha * dynamical time
+                            #             dynamical time / alpha
                             # corresponding to this dt, and release with
-                            # probability dt / (alpha * dynamical time) 
+                            # probability dt / (dynamical time / alpha)
 
                             # Compute probability of being ejected
                             odds = np.random.rand()
-                            dyntime_frac = dt / (alphas[ip,iz] * tdyns[ip,iz])
+                            dyntime_frac = alphas[ip,iz] * dt / tdyns[ip,iz]
                             if(odds < dyntime_frac):
                                 if(ParentID[ip,iz] == ParentID[ip,iznext]):
                                     # host wasn't also released at same time
