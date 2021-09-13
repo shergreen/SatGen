@@ -1,8 +1,8 @@
 # SatGen
 
 A semi-analytical satellite galaxy and dark matter halo generator,
-introduced in Jiang et al. (2020), extended in Green et al. (2020) and
-Green et al. (2021).
+introduced in Jiang et al. (2020), extended in Green et al. (2021a) and
+Green et al. (2021b).
 
 - Installation
 
@@ -186,8 +186,8 @@ For full cosmological applications, TreeGen.py and SatEvo.py constitute a
 complete set of exercises. TreeGen.py generates EPS merger trees and 
 initializes satellites at the first virial-crossing. SatEvo.py evolves 
 the satellites. Examples that utilize some of the updates to the model
-introduced in Green+20 and Green+21 for dark matter-only systems are
-shown in TreeGen_Sub.py and SubEvo.py
+introduced in Green et al. (2021a) and Green et al. (2021b) for 
+dark matter-only systems are shown in TreeGen_Sub.py and SubEvo.py
 
 These programs are process-based parallelized using python's 
 multiprocessing library. 
