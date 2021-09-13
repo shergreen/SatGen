@@ -1,6 +1,9 @@
 ##################### cosmology-related functions #######################
 
 # Arthur Fangzhou Jiang 2019 Hebrew University
+# Arthur Fangzhou Jiang 2021 Caltech & Carnegie
+
+# On 2021-05-04, added Benson+21 values of the PCH08 merger tree params
 
 #########################################################################
 
@@ -659,10 +662,12 @@ def R(q,**cosmo):
         cosmo: cosmological parameters (dictionary defined in config.py)
         
     Note that this function uses global variables.
+    On 2021-05-04, we add the Benson+21 modification to the "V" factor.
     """
     M1 = q*cfg.M0
     S1 = sigma(M1,0.,**cosmo)**2
     V = S1 / (S1 - cfg.S0)**1.5
+    V = V * (1.- cfg.S0/S1)**cfg.gamma3 # <<< Benson+21 modification
     fac1 = -dlnsigmadlnM(M1,**cosmo) / cfg.alphah
     fac2 = V / (cfg.B * q**cfg.beta)
     fac3=((2.*q)**cfg.mu *sigma(M1,0.,**cosmo)/cfg.sigmah)**cfg.gamma1

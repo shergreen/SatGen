@@ -49,6 +49,9 @@ cfg.lnL_pref = 0.75 # Fiducial, but can also use 1.0
 
 #---evolution mode (resolution limit in m/m_{acc} or m/M_0)
 cfg.evo_mode = 'arbres' # or 'withering'
+cfg.phi_res = 10**-5.0 # when cfg.evo_mode == 'arbres',
+#                        cfg.phi_res sets the lower limit in m/m_{acc}
+#                        that subhaloes evolve down until
 
 ########################### evolve satellites ###########################
 
@@ -357,9 +360,12 @@ def loop(file):
 
 #---for parallelization, comment for testing in serial mode
 if __name__ == "__main__":
-    Ncores = int(sys.argv[1])
+    if len(sys.argv) > 1:
+        Ncores = int(sys.argv[1])
+    else:
+        Ncores = cpu_count()
     pool = Pool(Ncores) # use as many as requested
-    pool.map(loop, files, chunksize=1)
+    pool.map(loop, np.random.permutation(files), chunksize=1)
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))

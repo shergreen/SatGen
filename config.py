@@ -7,6 +7,9 @@
 
 # Arthur Fangzhou Jiang 2017 Hebrew University
 # Sheridan Beckwith Green 2020 Yale University
+# Arthur Fangzhou Jiang 2021 Caltech & Carnegie
+
+# On 2021-05-04, added Benson+21 values of the PCH08 merger tree params
 
 #########################################################################
 
@@ -25,6 +28,14 @@ OL = 0.7
 s8 = 0.8
 ns = 1.
 
+# COCO simulation values
+#h = 0.704
+#Om = 0.272
+#Ob = 0.04455
+#OL = 0.728
+#s8 = 0.81
+#ns = 0.967
+
 #---for merger tree (the parameters for the Parkinson+08 algorithm)
 M0 = 1e12 # [Msun] [DEFAULT]: Typically changed in TreeGen_Sub
 Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
@@ -32,16 +43,38 @@ Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
 psi_res = 10**-5 # Resolution limit of merger tree
 z0 = 0. # [DEFAULT]: Typically changed in TreeGen_Sub
 zmax = 20.
-G0 = 0.6353 
-gamma1 = 0.1761
-gamma2 = 0.0411
+
+# Benson17 values
+#G0 = 0.6353 
+#gamma1 = 0.1761
+#gamma2 = 0.0411
+#gamma3 = 0.
+
+# Benson+21 values
+G0 = 0.943
+gamma1 = -0.158
+gamma2 = 0.0488
+gamma3 = 0.202
 
 #---for satellite evolution 
 phi_res = 10**-5 # Resolution in m/m_{acc}
 Rres = 0.001 # [kpc] spatial resolution (Over-written in SubEvo)
 lnL_pref = 0.75 # multiplier for Coulomb logarithm (fiducial 0.75)
+# NOTE: The lnL_pref default is 0.75, calibrated in Green+20
+# A typical default would be lnL_pref = 1.0
 lnL_type = 0 # indicates using log(Mh/Ms) (instantaneous)
 evo_mode = 'arbres' # or 'withering'
+
+# NOTE: Some of the above parameters are used in TreeGen_Sub and SubEvo
+# but not in TreeGen an SatEvo, and vice versa.
+# For example, in the subhalo-only evolution, we allow for specifying
+# between "arbitrary resolution" and "withering-on" modes.
+# However, in the SatEvo code, subhaloes+satellites are evolved down
+# to a specified Mres and orbits are evolved until they fall below
+# a particular Rres.
+# Furthermore, psi_res and phi_res use the notation of the Green+20
+# paper and are employed in TreeGen_Sub/SubEvo but are not necessary
+# in the example implementations of TreeGen/SatEvo
 
 ############################# constants #################################
 
@@ -54,8 +87,10 @@ RootPi = np.sqrt(np.pi)
 Root2OverPi = np.sqrt(2./np.pi)
 Root1Over2Pi = np.sqrt(0.5/np.pi)
 TwoOverRootPi = 2./np.sqrt(np.pi)
+FourOverRootPi = 4./np.sqrt(np.pi)
 FourPiOverThree = 4.*np.pi/3.
 TwoPi = 2.*np.pi
+TwoPiG = 2.*np.pi*G
 TwoPisqr = 2.*np.pi**2
 ThreePi = 3.*np.pi
 FourPi = 4.*np.pi
@@ -119,6 +154,7 @@ while z<=zmax:
     tlkbk = co.tlkbk(z,h,Om,OL)
     tdyn = co.tdyn(z,h,Om,OL) # NOTE: This uses BN98 for Delta
     dt = min(0.06, 0.1 * tdyn)
+    # NOTE: The above sets the maximum output time step to be 0.06 Gyr
     z = ztlkbk_interp(tlkbk+dt)
     zsample.append(z)
     dtsample.append(dt)
@@ -150,8 +186,10 @@ gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
 # for computing enclosed mass within Green and van den Bosch (2019)
 print('>>> Building interpolation grid for Green+19 M(<r|f_b,c)...')
 print('>>> Building interpolation grid for Green+19 sigma(r|f_b,c)...')
+print('>>> Building interpolation grid for Green+19 d2Phidr2(r|f_b,c)...')
 gvdb_mm = np.load('etc/gvdb_mm.npy')
 gvdb_sm = np.load('etc/gvdb_sm.npy')
+gvdb_pm = np.load('etc/gvdb_pm.npy')
 nfb = 100
 nr = 131
 ncs = 30
@@ -173,6 +211,7 @@ log_r_vals_int = np.log10(r_vals_int)
 log_cs_vals_int = np.log10(cs_vals_int)
 fb_cs_interps_mass = []
 fb_cs_interps_sigma = []
+fb_cs_interps_d2Phidr2 = []
 # TODO: Decide if switching to linear-space from log-space gives
 # a speed-up sufficiently worth it..?
 for i in range(0, nr):
@@ -182,6 +221,10 @@ for i in range(0, nr):
     fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int,
                                                    log_cs_vals_int,
                                                    gvdb_sm[:,:,i]))
+    fb_cs_interps_d2Phidr2.append(RectBivariateSpline(log_fb_vals_int,
+                                                      log_cs_vals_int,
+                                                      gvdb_pm[:,:,i]))
+
 
 # Jiang+15 subhalo orbital model parameters (Table 2)
 # rows correspond to host mass (i.e., peak height)

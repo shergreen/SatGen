@@ -12,6 +12,7 @@ import config as cfg
 import numpy as np
 import sys
 from fast_histogram import histogram2d
+from scipy.integrate import quad
 
 #########################################################################
 
@@ -90,6 +91,24 @@ def FindNearestIndex(arr,value):
     """
     return (np.abs(arr-value)).argmin() 
 
+def FindSignChangeIndex(arr):
+    """
+    Find the indices of the location of sign changes in an array
+    
+    Syntax:
+    
+        FindSignChangeIndex(arr)
+        
+    where
+    
+        arr: the array being analyzed (1D or 2D array)
+        
+    If arr is 2D, return the sign-changing indices in the last axis.
+    
+    # <<< still need to be polished, as of 2021-07-16 
+    """
+    return np.where(np.diff(np.sign(arr)))[0]
+
 def downsample(y,x,xgrid):
     """
     Downsample the fine-grid measurements y(x) onto a coarser xgrid.
@@ -110,9 +129,11 @@ def downsample(y,x,xgrid):
             
     Return 
     
-        ysample: the y values at the x coordinates closest to xgrid,
+        ysample: the y values at the x coordinates closest to xgrid
+            (array),
         xsample: subset of xgrid that corresponds to the range of x
-    
+            (array)
+            
     Note that because of the dependence on FindClosestIndices, y, x and 
     xgrid all have to be numpy arrays, and x and xgrid have to be sorted
     -- one can regard x and xgrid as the redshift grid of a merger tree.
@@ -132,6 +153,9 @@ def downsample(y,x,xgrid):
         # when all the elements of x are close to a single xgrid element.
     idx = FindClosestIndices(x,xsample)
     ysample = y[idx]
+    if np.isscalar(xsample): # safety, make sure to return arrays
+        xsample = np.array([xsample,])
+        ysample = np.array([ysample,])
     return ysample,xsample
 def FindClosestElements(arr, values):
     """
@@ -303,10 +327,9 @@ def project(rr,eX,eY):
         )).T
         
 def pixelize(R):
-    r"""
+    """
     Pixelize an area of 2R x 2R on the projection plane; bin particles
     into the pixels according to their 2D coordinates.
-    
     
     Syntax:
         pixelize(R)
@@ -331,6 +354,57 @@ def pixelize(R):
     #im[im==0.] = cfg.Sigma_sky # <<< play with
     im[im==0.] = 1e-6 * im.max()
     return im.T
+    
+#---temporarily put here, for the program test_SIDMprofiles_fit.py
+def slope(r,r_grid,rho_grid):
+    """
+    Logarithmic slope of density profile at a given radius.
+    
+    Syntax:
+        
+        slope(r,r_grid,rho_grid)
+        
+    where
+    
+        r:  radius at which we evaluate the slope [kpc] (float)
+        r_grid: radius array of the density profile [kpc] (array)
+        rho_grid: density profile [M_sun kpc^-3] (array)
+    """
+    if r<r_grid.min():
+        sys.exit('Radius too small. Stop.')
+    if r>r_grid.max():
+        sys.exit('Radius too large. Stop.')
+    i = FindNearestIndex(r_grid,r)
+    if i==(len(r_grid)-1): 
+        i = i-1
+    return - np.log(rho_grid[i+1]/rho_grid[i]) / np.log(r_grid[i+1]/r_grid[i])
+
+def mass(r,r_grid,rho_grid,lnrho_interp):
+    """
+    Enclosed mass at a given radius, given the (non-parametric) density 
+    profile. 
+    
+    Syntax:
+    
+        mass(r,r_grid,rho_grid)
+        
+    where
+    
+        r: radius at which we evaluate the enclosed mass (float)
+        r_grid: radii array of the density profile [kpc] (array)
+        rho_grid: density profile [M_sun kpc^-3] (array)
+        lnrho_interp: interpolation function ln(rho) as a function of 
+            ln(r), based on the density profile grid rho_grid and r_grid
+    """ 
+    if r<r_grid.min():
+        sys.exit('Radius too small. Stop.')
+    if r>r_grid.max():
+        sys.exit('Radius too large. Stop.')
+    f = lambda lnr: cfg.FourPi* (np.exp(lnr))**3 * np.exp(lnrho_interp(lnr))
+    I = quad(f, np.log(r_grid[0]), np.log(r), args=(), 
+        epsabs=1.e-7, epsrel=1.e-6,limit=10000)[0]
+    return cfg.FourPi/3.*r_grid[0]**3 * rho_grid[0] + I 
+
 def add_cyl_vecs(xv1, xv2):
     """
     Given two 6D position+velocity vectors in the cylindrical coordinate
