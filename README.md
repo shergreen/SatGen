@@ -9,7 +9,7 @@ Green et al. (2021b).
 `git clone https://github.com/shergreen/SatGen.git` to clone the repository.
 
 Note that `git checkout sheridan` was originally required in order to get the
-version of SatGen from Green et al. (2020). Now, the `sheridan` branch contains
+version of SatGen from Green et al. (2021a). Now, the `sheridan` branch contains
 the same files as the `master` branch.
 
 - Model overview
