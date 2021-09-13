@@ -38,7 +38,7 @@ ns = 1.
 
 #---for merger tree (the parameters for the Parkinson+08 algorithm)
 M0 = 1e12 # [Msun] [DEFAULT]: Typically changed in TreeGen_Sub
-Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
+Mres = None # [Msun] [DEFAULT]: mass resolution of merger tree
            # (Mres/M0 = psi_{res})
 psi_res = 10**-5 # Resolution limit of merger tree
 z0 = 0. # [DEFAULT]: Typically changed in TreeGen_Sub
