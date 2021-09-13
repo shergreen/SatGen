@@ -2752,6 +2752,9 @@ class Green(object):
         NOTE:
             An alternative implementation would be to set subhalo masses
             to zero once their m/m_{acc} falls below phi_{res}.
+            Using the current implementation, during analysis, one must
+            mask all subhaloes with m <= M_{init} * phi_{res}, since these
+            are subhaloes that have fallen below our resolution limit.
         """
         self.Mh = Mnew
         self.fb = self.Mh / self.Minit

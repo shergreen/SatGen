@@ -297,8 +297,12 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     if lt<sp.rh: 
         dm = alpha * (sp.Mh-sp.M(lt)) * dt/pr.tdyn(potential,xv[0],xv[2])
         dm = max(dm,0.) # avoid negative dm
-        m = max(sp.Mh-dm,cfg.phi_res*sp.Minit) 
-        # changed from max(sp.Mh-dm,cfg.Mres), which is used for fixed Mres
+        if cfg.Mres is not none:
+            # Fixed Mres case
+            m = max(sp.Mh-dm, cfg.Mres)
+        else:
+            # Evolve subhaloes down to m/m_{acc} = phi_{res}
+            m = max(sp.Mh-dm,cfg.phi_res*sp.Minit) 
     else:
         m = sp.Mh
     return m,lt
