@@ -6,6 +6,9 @@
 # - no longer convert speed unit from kpc/Gyr to km/s 
 # - improved dynamical-friction (DF) (see profiles.py for more details)
 
+# Arthur Fangzhou Jiang 2020, Caltech --- revision:
+# - added ram-pressure (RP) drag due to dark-matter self-interaction 
+
 #########################################################################
 
 from profiles import ftot
@@ -93,7 +96,7 @@ class orbit(object):
         self.xvList = []
         if potential is not None: 
             pass # <<< to be added: self.rperi and self.rapo etc 
-    def integrate(self,t,potential,m=None):
+    def integrate(self,t,potential,m=None,sigmamx=None,Xd=None):
         r"""
         Integrate orbit over time "t" [Gyr], using methods that comes 
         with scipy.integrate.ode; and update coorinates to be the values 
@@ -101,7 +104,7 @@ class orbit(object):
         
         Syntax:
         
-            o.integrate(t,potential,m=None)
+            o.integrate(t,potential,m=None,sigmamx=None)
         
         where
         
@@ -109,9 +112,16 @@ class orbit(object):
             potential: host potential (a profile object, as defined 
                 in profile.py, or a list of such objects which 
                 altogether constitute the host potential)
-            m: satellite mass [Msun] 
+            m: satellite mass [M_sun]  (float or None)
                 (default is None; if provided, dynamical friction is 
                 triggered)
+            sigmamx: self-interaction cross section over particle mass 
+                [cm^2/g] or [2.08889e-10 kpc^2/M_sun] (float or None)
+                (default is None; if provided, ram-pressure drag is 
+                triggered)    
+            Xd: coefficient for ram-pressure drag as in Kummer+18
+                (default is None; if sigmamx provided, ram-pressure drag
+                is triggered, then Xd must be provided)
                 
         Note that in case when t is list or array, attributes such as 
         
@@ -135,7 +145,7 @@ class orbit(object):
             atol=1e-5, # default = 1e-12
             )
         solver.set_initial_value(self.xv, self.t)
-        solver.set_f_params(potential,m,)            
+        solver.set_f_params(potential,m,sigmamx,Xd)            
         if isinstance(t, list) or isinstance(t,np.ndarray): 
             for tt in t:               
                 solver.integrate(tt)
@@ -152,7 +162,7 @@ class orbit(object):
         self.tArray = np.array(self.tList)
         self.xvArray = np.array(self.xvList)
 
-def f(t,y,p,m):
+def f(t,y,p,m,sigmamx,Xd):
     r"""
     Returns right-hand-side functions of the EOMs for orbit integration:
     
@@ -178,8 +188,11 @@ def f(t,y,p,m):
         p: host potential (a density profile object, as defined 
             in profiles.py, or a list of such objects that constitute a 
             composite potential)
-        m: satellite mass [Msun] (float or None) 
-            (If m is None, DF is ignored)
+        m: satellite mass [M_sun] (float or None) 
+            (If m is None, dynamical friction is ignored)
+        sigmamx: self-interaction cross section over particle mass 
+            [cm^2/g] or [2.08889e-10 kpc^2/M_sun] (float or None)
+            (If sigmamx is None, ram-pressure is ignored)
 
     Note that fR, fphi, fz are the R-, phi- and z-components of the 
     acceleration at phase-space location y, computed by the function 
@@ -198,7 +211,7 @@ def f(t,y,p,m):
     phase-space coordinates in a cylindrical frame
     """
     R, phi, z, VR, Vphi, Vz = y
-    fR, fphi, fz = ftot(p,y,m)
+    fR, fphi, fz = ftot(p,y,m,sigmamx,Xd)
     R = max(R,1e-6) # safety
     return [VR, 
         Vphi/R, 

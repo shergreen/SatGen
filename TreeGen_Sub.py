@@ -1,10 +1,14 @@
-################################ TreeGen ################################
+################################ TreeGen_Sub ################################
 
 # Generate halo merger trees using the Parkinson et al. (2008) algorithm.
+# Slightly modified from original TreeGen to only produce quantities necessary
+# for dark matter subhalo evolution. Additionally, this version introduces
+# Zhao-Zhou Li's infall orbital parameter distribution.
 
 # Arthur Fangzhou Jiang 2015 Yale University
 # Arthur Fangzhou Jiang 2016 Hebrew University
 # Arthur Fangzhou Jiang 2019 Hebrew University
+# Sheridan Beckwith Green 2020 Yale University
 
 ######################## set up the environment #########################
 
@@ -12,7 +16,7 @@
 import config as cfg
 import cosmo as co
 import init
-from profiles import Dekel
+from profiles import NFW
 import aux
 
 #---python modules
@@ -20,18 +24,25 @@ import numpy as np
 import time 
 from multiprocessing import Pool, cpu_count
 import sys
+from os import path
 
 ############################# user control ##############################
 
 #---target halo and desired resolution 
-lgM0 = 12.3
+lgM0 = 14.2 - np.log10(cfg.h) # log10(Msun), corresponds to 10^14.2 Msun/h
+cfg.psi_res = 10**-5.0
 z0 = 0.
-#lgMres = 8.
-lgMres = 9.
-Ntree = 24
+lgMres = lgM0 + np.log10(cfg.psi_res) # psi_{res} = 10^-5 by default
+Ntree = 2000
+
+#---orbital parameter sampler preference
+optype =  'zzli' # 'zzli' or 'zentner' or 'jiang'
+
+#---concentration model preference
+conctype = 'zhao' # 'zhao' or 'vdb'
 
 #---for output
-outfile1 = './OUTPUT_TREE_20200302/tree%i_lgM%.2f.npz' #%(itree,lgM0)
+outfile1 = './OUTPUT_TREE/tree%i_lgM%.2f.npz' #%(itree,lgM0)
 
 ############################### compute #################################
 
@@ -45,6 +56,11 @@ def loop(itree):
     """
     Replaces the loop "for itree in range(Ntree):", for parallelization.
     """
+
+    # check if this one has already been ran
+    if path.exists(outfile1%(itree,lgM0)):
+        return
+
     time_start_tmp = time.time()
     
     np.random.seed() # [important!] reseed the random number generator
@@ -75,12 +91,7 @@ def loop(itree):
     
     VirialRadius = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
     concentration = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
-    DekelConcentration = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
-    DekelSlope = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99.
-    
-    StellarMass = np.zeros((cfg.Nmax,cfg.Nz)) - 99. 
-    StellarSize = np.zeros((cfg.Nmax,cfg.Nz),np.float32) - 99. 
-    
+                                                        
     coordinates = np.zeros((cfg.Nmax,cfg.Nz,6),np.float32)
     
     while True: # loop over branches, until the full tree is completed.
@@ -132,34 +143,31 @@ def loop(itree):
         # coarser output timesteps, cfg.zsample     
         Msample,zsample = aux.downsample(M,z,cfg.zsample)
         iz = aux.FindClosestIndices(cfg.zsample,zsample)
+        if(isinstance(iz,np.int64)):
+            iz = np.array([iz]) # avoids error in loop below
+            zsample = np.array([zsample])
+            Msample = np.array([Msample])
         izleaf = aux.FindNearestIndex(cfg.zsample,zleaf)
+        # Note: zsample[j] is same as cfg.zsample[iz[j]]
         
         # compute halo structure throughout time on the coarse grid, up
         # to the leaf point
         t = co.t(z,cfg.h,cfg.Om,cfg.OL)
-        c,a,c2,Rv = [],[],[],[]
+        c2,Rv = [],[]
         for i in iz:
             if i > (izleaf+1): break # only compute structure below leaf
             msk = z>=cfg.zsample[i]
             if True not in msk: break # safety
-            ci,ai,Msi,c2i=init.Dekel_fromMAH(M[msk],t[msk],cfg.zsample[i])
-            Rvi = init.Rvir(M[msk][0],Delta=200.,z=cfg.zsample[i])
-            c.append(ci)
-            a.append(ai)
+            c2i=init.c2_fromMAH(M[msk],t[msk],conctype)
+            Rvi = init.Rvir(M[msk][0],Delta=cfg.Dvsample[i], z=cfg.zsample[i])
             c2.append(c2i)
             Rv.append(Rvi)
-            if i==iz[0]: Ms = Msi
             #print('    i=%6i,ci=%8.2f,ai=%8.2f,log(Msi)=%8.2f,c2i=%8.2f'%\
             #    (i,ci,ai,np.log10(Msi),c2i)) # <<< for test
-        c = np.array(c)
-        a = np.array(a) 
         c2 = np.array(c2) 
         Rv = np.array(Rv)
         Nc = len(c2) # length of a branch over which c2 is computed 
         
-        # compute stellar size at the root of the branch, i.e., at the 
-        # accretion epoch (z[0])
-        Re = init.Reff(Rv[0],c2[0])
         
         # use the redshift id and parent-branch id to access the parent
         # branch's information at our current branch's accretion epoch,
@@ -167,12 +175,18 @@ def loop(itree):
         if ip==-1: # i.e., if the branch is the main branch
             xv = np.zeros(6)
         else:
-            Mp = mass[ip,iz[0]]
-            cp = DekelConcentration[ip,iz[0]]
-            ap = DekelSlope[ip,iz[0]]
-            hp = Dekel(Mp,cp,ap,Delta=200.,z=zsample[0])
-            eps = 1./np.pi*np.arccos(1.-2.*np.random.random())
-            xv = init.orbit(hp,xc=1.,eps=eps)
+            Mp  = mass[ip,iz[0]]
+            c2p = concentration[ip,iz[0]]
+            hp  = NFW(Mp,c2p,Delta=cfg.Dvsample[iz[0]],z=zsample[0])
+            if(optype == 'zentner'):
+                eps = 1./np.pi*np.arccos(1.-2.*np.random.random())
+                xv  = init.orbit(hp,xc=1.,eps=eps)
+            elif(optype == 'zzli'):
+                vel_ratio, gamma = init.ZZLi2020(hp, Msample[0], zsample[0])
+                xv = init.orbit_from_Li2020(hp, vel_ratio, gamma)
+            elif(optype == 'jiang'):
+                sp = NFW(Msample[0],c2[0],Delta=cfg.Dvsample[iz[0]],z=zsample[0])
+                xv = init.orbit_from_Jiang2015(hp,sp,zsample[0])
         
         # <<< test
         #print('    id=%6i,k=%2i,z[0]=%7.2f,log(M[0])=%7.2f,c=%7.2f,a=%7.2f,c2=%7.2f,log(Ms)=%7.2f,Re=%7.2f,xv=%7.2f,%7.2f,%7.2f,%7.2f,%7.2f,%7.2f'%\
@@ -185,11 +199,6 @@ def loop(itree):
         
         VirialRadius[id,iz[0]:iz[0]+Nc] = Rv
         concentration[id,iz[0]:iz[0]+Nc] = c2
-        DekelConcentration[id,iz[0]:iz[0]+Nc] = c
-        DekelSlope[id,iz[0]:iz[0]+Nc] = a
-
-        StellarMass[id,iz[0]] = Ms
-        StellarSize[id,iz[0]] = Re
         
         coordinates[id,iz[0],:] = xv
                 
@@ -217,10 +226,6 @@ def loop(itree):
     ParentID = ParentID[:id+1,:]
     VirialRadius = VirialRadius[:id+1,:]
     concentration = concentration[:id+1,:]
-    DekelConcentration = DekelConcentration[:id+1,:]
-    DekelSlope = DekelSlope[:id+1,:]
-    StellarMass = StellarMass[:id+1,:]
-    StellarSize = StellarSize[:id+1,:]
     coordinates = coordinates[:id+1,:,:]
     np.savez(outfile1%(itree,lgM0), 
         redshift = cfg.zsample,
@@ -230,11 +235,6 @@ def loop(itree):
         ParentID = ParentID,
         VirialRadius = VirialRadius,
         concentration = concentration,
-        DekelConcentration = DekelConcentration,
-        DekelSlope = DekelSlope,
-        #VirialOverdensity = VirialOverdensity, # <<< no need in TreeGen
-        StellarMass = StellarMass,
-        StellarSize = StellarSize,
         coordinates = coordinates,
         )
             
@@ -243,10 +243,9 @@ def loop(itree):
         %(itree,Nbranch,k,time_end_tmp-time_start_tmp))
 
 if __name__ == "__main__":
-    pool = Pool(cpu_count()) # use all cores
-    pool.map(loop, range(Ntree))
+    Ncores = int(sys.argv[1])
+    pool = Pool(Ncores) # use as many as requested
+    pool.map(loop, range(Ntree), chunksize=1)
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
-    
-    

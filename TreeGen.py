@@ -275,5 +275,3 @@ if __name__ == "__main__":
 
 time_end = time.time() 
 print('    total time: %5.2f hours'%((time_end - time_start)/3600.))
-    
-    

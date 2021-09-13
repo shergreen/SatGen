@@ -1,6 +1,8 @@
 ################## Functions for galaxy-halo connection ####################
 
 # Arthur Fangzhou Jiang 2019, HUJI
+# Arthur Fangzhou Jiang 2020, Caltech
+# Sheridan Beckwith Green 2020, Yale
 
 #########################################################################
 
@@ -8,6 +10,10 @@ import numpy as np
 
 import config as cfg
 import aux
+import profiles as pr
+import cosmo as co
+
+from lmfit import minimize, Parameters
 
 #########################################################################
 
@@ -191,20 +197,22 @@ def c2c2DMO(X,choice='NIHAO'):
         
 #---concentration-mass-redshift relations
 
-def c2_Zhao09(Mv,t):
+def c2_Zhao09(Mv,t,version='zhao'):
     """
     Halo concentration from the mass assembly history, using the Zhao+09
     relation.
     
     Syntax:
     
-        c2_Zhao09(Mv,t)
+        c2_Zhao09(Mv,t,version)
         
     where
     
         Mv: main-branch virial mass history [M_sun] (array)
         t: the time series of the main-branch mass history (array of the
             same size as Mv)
+        version: 'zhao' or 'vdb' for the different versions of the
+                 fitting function parameters (string)
     
     Note that we need Mv and t in reverse chronological order, i.e., in 
     decreasing order, such that Mv[0] and t[0] is the instantaneous halo
@@ -216,8 +224,14 @@ def c2_Zhao09(Mv,t):
         
         halo concentration c R_vir / r_-2 (float)
     """
+    if(version == 'vdb'):
+        coeff1 = 3.40
+        coeff2 = 6.5
+    elif(version == 'zhao'):
+        coeff1 = 3.75
+        coeff2 = 8.4
     idx = aux.FindNearestIndex(Mv,0.04*Mv[0])
-    return 4.*(1.+(t[0]/(3.75*t[idx]))**8.4)**0.125
+    return 4.*(1.+(t[0]/(coeff1*t[idx]))**coeff2)**0.125
     
 def lgc2_DM14(Mv,z=0.):
     r"""
@@ -249,3 +263,255 @@ def lgc2_DM14(Mv,z=0.):
     a = 0.029*z - 0.130
     b = 0.459 + (0.977-0.459) * np.exp(-0.490* z**1.303) 
     return a*np.log10(Mv*cfg.h/10**12.)+b
+
+def c2_DK15(Mv,z=0.,n=-2):
+    """
+    Halo concentration from Diemer & Kravtsov 15 (eq.9).
+    
+    Syntax:
+    
+        c2_DK15(Mv,z)
+        
+    where
+    
+        Mv: virial mass, M_200c [M_sun] (float or array)
+        z: redshift (float or array of the same size as Mv,default=0.)
+        n: logarithmic slope of power spectrum (default=-2 or -2.5 for
+            typical values of LCDM, but more accurately, use the power
+            spectrum to calculate n)
+    
+    Note that this is for M_200c.
+    Note that the parameters are for the median relation
+    
+    Return:
+        
+        halo concentration R_200c / r_-2 (float)
+    """
+    cmin = 6.58 + 1.37*n
+    vmin = 6.82 + 1.42*n
+    v = co.nu(Mv,z,**cfg.cosmo)
+    fac = v / vmin
+    return 0.5*cmin*(fac**(-1.12)+fac**1.69)
+
+#---halo contraction model
+
+def contra_Hernquist(r,h,d,A=0.85,w=0.8):
+    """
+    Returns contracted halo profile given baryon profile and initial halo 
+    profile, following the model of Gnedin+04.
+    
+    Syntax:
+    
+        contra(r,h,d)
+        
+    where
+    
+        r: initial radii at which we evaluate the mass profile [kpc]
+            (array)
+        h: initial NFW halo profile (object of the NFW class as defined
+            in profiles.py)
+        d: baryon profile (object of the Hernquist class as defined in
+            profiles.py)
+        A: coefficient in the relation between the orbit-averaged radius 
+            of a particle that is currently in a shell and the instant
+            radius of the shell: <r>/r_vir = A (r/r_vir)^w 
+            (default=0.85)
+        w: power-law index in the relation between the orbit-averaged
+            radius and instant radius (default=0.8)
+            
+    Note that there is halo-to-halo variation in the values of A and w,
+    which is discussed in Gnedin+11. Here we ignore the halo-to-halo 
+    variation and adopt the fiducial values A=0.85 and w=0.8 as in 
+    Gnedin+04.
+    
+    Note that the input halo object "h" is for the total mass profile,
+    which includes an initial baryon mass distribution that is assumed
+    to be self-similar to the initial DM profile, i.e.,
+    
+        M_dm,i = (1-f_b) M_i(r)
+        M_b,i = f_b M_i(r)
+            
+    Return:
+    
+        contracted radii, r_f [kpc] (array of the same length as r)
+        enclosed DM mass at r_f [M_sun] (array of the same length as r) 
+    """
+    # prepare variables
+    Mv = h.Mh
+    c = h.ch
+    rv = h.rh
+    fc = h.f(c)
+    Mb = d.Mb
+    rb = d.r0
+    fb = Mb/Mv
+    xb = rb/rv
+    x = r/rv
+    xave = A * x**w
+    rave = xave * rv # orbit-averaged radii
+    # compute y_0
+    a = 2.*fb*(1.+xb)**2 * fc / (xb*c)**2
+    fdm = 1.-fb
+    s = 0.5/a 
+    p = 1.+2.*w
+    sqrtQ1 = np.sqrt( (fdm/(3.*a))**3 + s**2 )
+    sqrtQw = np.sqrt( (fdm/p)**p / a**3 + s**2 )
+    y1 = (sqrtQ1 + s)**(1./3.) - (sqrtQ1 - s)**(1./3.)
+    yw = (sqrtQw + s)**(1./p) - (sqrtQw - s)**(1./p)
+    em2a = np.exp(-2.*a) 
+    y0 = y1*em2a + yw*(1.-em2a)
+    # compute exponent b
+    b = 2.*y0/(1.-y0)*(2./xb-4.*c/3.)/(2.6+fdm/(a*y0**(2.*w)))
+    # compute the contraction ratio y(x)=r_f / r
+    Mi = h.M(rave)
+    t0 = 1./(fdm + d.M(y0**w *rave)/Mi)
+    t1 = 1./(fdm + d.M(rave)/Mi)
+    embx = np.exp(-b*x)
+    y = t0*embx + t1*(1.-embx)
+    rf = y*r
+    return rf, fdm*h.M(r)
+    
+def contra_exp(r,h,d,A=0.85,w=0.8):
+    """
+    Returns contracted halo profile given baryon profile and initial halo 
+    profile, following the model of Gnedin+04.
+    
+    Similar to "contra_Hernquist", but here we assume the final baryon
+    distribution to be an exponential disk, instead of a spherical 
+    Hernquist profile
+    
+    Syntax:
+    
+        contra(r,h,d)
+        
+    where
+    
+        r: initial radii at which we evaluate the mass profile [kpc]
+            (array)
+        h: initial NFW halo profile (object of the NFW class as defined
+            in profiles.py)
+        d: baryon profile (object of the exponential class as defined in
+            profiles.py)
+        A: coefficient in the relation between the orbit-averaged radius 
+            of a particle that is currently in a shell and the instant
+            radius of the shell: <r>/r_vir = A (r/r_vir)^w 
+            (default=0.85)
+        w: power-law index in the relation between the orbit-averaged
+            radius and instant radius (default=0.8)
+            
+    Note that there is halo-to-halo variation in the values of A and w,
+    which is discussed in Gnedin+11. Here we ignore the halo-to-halo 
+    variation and adopt the fiducial values A=0.85 and w=0.8 as in 
+    Gnedin+04.
+    
+    Note that the input halo object "h" is for the total mass profile,
+    which includes an initial baryon mass distribution that is assumed
+    to be self-similar to the initial DM profile, i.e.,
+    
+        M_dm,i = (1-f_b) M_i(r)
+        M_b,i = f_b M_i(r)
+            
+    Return:
+    
+        contracted radii, r_f [kpc] (array of the same length as r)
+        enclosed DM mass at r_f [M_sun] (array of the same length as r) 
+    """
+    # prepare variables
+    Mv = h.Mh
+    c = h.ch
+    rv = h.rh
+    fc = h.f(c)
+    Mb = d.Mb
+    rb = d.r0
+    fb = Mb/Mv
+    xb = rb/rv
+    x = r/rv
+    xave = A * x**w
+    rave = xave * rv # orbit-averaged radii
+    # compute y_0
+    a = fb * fc / (xb*c)**2
+    fdm = 1.-fb
+    s = 0.5/a 
+    p = 1.+2.*w
+    sqrtQ1 = np.sqrt( (fdm/(3.*a))**3 + s**2 )
+    sqrtQw = np.sqrt( (fdm/p)**p / a**3 + s**2 )
+    y1 = (sqrtQ1 + s)**(1./3.) - (sqrtQ1 - s)**(1./3.)
+    yw = (sqrtQw + s)**(1./p) - (sqrtQw - s)**(1./p)
+    em2a = np.exp(-2.*a) 
+    y0 = y1*em2a + yw*(1.-em2a)
+    # compute exponent b
+    b = 2.*y0/(1.-y0)*(2./(3.*xb)-4.*c/3.)/(2.6+fdm/(a*y0**(2.*w)))
+    # compute the contraction ratio y(x)=r_f / r
+    Mi = h.M(rave)
+    t0 = 1./(fdm + d.M(y0**w *rave)/Mi)
+    t1 = 1./(fdm + d.M(rave)/Mi)
+    embx = np.exp(-b*x)
+    y = t0*embx + t1*(1.-embx)
+    rf = y*r
+    return rf, fdm*h.M(r)
+    
+def contra(r,h,d,A=0.85,w=0.8):
+    """
+    Returns contracted halo profile given baryon profile and initial halo 
+    profile, following the model of Gnedin+04.
+    
+    Syntax:
+    
+        contra(r,h,d)
+        
+    where
+    
+        r: initial radii at which we evaluate the mass profile [kpc]
+            (array)
+        h: initial NFW halo profile (object of the NFW class as defined
+            in profiles.py)
+        d: baryon profile (object of the Hernquist class as defined in
+            profiles.py)
+        A: coefficient in the relation between the orbit-averaged radius 
+            of a particle that is currently in a shell and the instant
+            radius of the shell: <r>/r_vir = A (r/r_vir)^w 
+            (default=0.85)
+        w: power-law index in the relation between the orbit-averaged
+            radius and instant radius (default=0.8)
+            
+    Note that there is halo-to-halo variation in the values of A and w,
+    which is discussed in Gnedin+11. Here we ignore the halo-to-halo 
+    variation and adopt the fiducial values A=0.85 and w=0.8 as in 
+    Gnedin+04.
+    
+    Note that the input halo object "h" is for the total mass profile,
+    which includes an initial baryon mass distribution that is assumed
+    to be self-similar to the initial DM profile, i.e.,
+    
+        M_dm,i = (1-f_b) M_i(r)
+        M_b,i = f_b M_i(r)
+            
+    Return:
+    
+        the contracted DM profile (object of the Dekel class as defined
+            in profiles.py) 
+        contracted radii, r_f [kpc] (array of the same length as r)
+        enclosed DM mass at r_f [M_sun] (array of the same length as r) 
+    """
+    # contract
+    if isinstance(d,pr.Hernquist):
+        rf,Mdmf = contra_Hernquist(r,h,d,A,w)
+    elif isinstance(d,pr.exp):
+        rf,Mdmf = contra_exp(r,h,d,A,w)
+    # fit contracted profile
+    params = Parameters()
+    params.add('Mv', value=(1.-d.Mb/h.Mh)*h.Mh, vary=False)
+    params.add('c', value=h.ch,min=1.,max=100.)
+    params.add('a', value=1.,min=-2.,max=2.)
+    out = minimize(fobj_Dekel, params, args=(rf,Mdmf,h.Deltah,h.z)) 
+    MvD = out.params['Mv'].value
+    cD = out.params['c'].value
+    aD = out.params['a'].value
+    return pr.Dekel(MvD,cD,aD),rf,Mdmf 
+def fobj_Dekel(p, xdata, ydata, Delta, z):
+    """
+    Auxiliary function for "contra" -- objective function for fitting
+    a Dekel+ profile to the contracted halo
+    """
+    h = pr.Dekel(p['Mv'].value,p['c'].value,p['a'].value,Delta=Delta,z=z)
+    ymodel = h.M(xdata)
+    return (ydata - ymodel) / ydata

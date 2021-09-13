@@ -3,6 +3,7 @@
 # Auxiliary functions.
 
 # Arthur Fangzhou Jiang 2019 Hebrew University
+# Sheridan Beckwith Green 2020 Yale University
 
 #########################################################################
 
@@ -11,6 +12,7 @@ import config as cfg
 import numpy as np
 import sys
 from fast_histogram import histogram2d
+from scipy.integrate import quad
 
 #########################################################################
 
@@ -88,6 +90,24 @@ def FindNearestIndex(arr,value):
         value: the value of interest (float)
     """
     return (np.abs(arr-value)).argmin() 
+
+def FindSignChangeIndex(arr):
+    """
+    Find the indices of the location of sign changes in an array
+    
+    Syntax:
+    
+        FindSignChangeIndex(arr)
+        
+    where
+    
+        arr: the array being analyzed (1D or 2D array)
+        
+    If arr is 2D, return the sign-changing indices in the last axis.
+    
+    # <<< still need to be polished, as of 2021-07-16 
+    """
+    return np.where(np.diff(np.sign(arr)))[0]
 
 def downsample(y,x,xgrid):
     """
@@ -307,10 +327,9 @@ def project(rr,eX,eY):
         )).T
         
 def pixelize(R):
-    r"""
+    """
     Pixelize an area of 2R x 2R on the projection plane; bin particles
     into the pixels according to their 2D coordinates.
-    
     
     Syntax:
         pixelize(R)
@@ -335,3 +354,95 @@ def pixelize(R):
     #im[im==0.] = cfg.Sigma_sky # <<< play with
     im[im==0.] = 1e-6 * im.max()
     return im.T
+    
+#---temporarily put here, for the program test_SIDMprofiles_fit.py
+def slope(r,r_grid,rho_grid):
+    """
+    Logarithmic slope of density profile at a given radius.
+    
+    Syntax:
+        
+        slope(r,r_grid,rho_grid)
+        
+    where
+    
+        r:  radius at which we evaluate the slope [kpc] (float)
+        r_grid: radius array of the density profile [kpc] (array)
+        rho_grid: density profile [M_sun kpc^-3] (array)
+    """
+    if r<r_grid.min():
+        sys.exit('Radius too small. Stop.')
+    if r>r_grid.max():
+        sys.exit('Radius too large. Stop.')
+    i = FindNearestIndex(r_grid,r)
+    if i==(len(r_grid)-1): 
+        i = i-1
+    return - np.log(rho_grid[i+1]/rho_grid[i]) / np.log(r_grid[i+1]/r_grid[i])
+
+def mass(r,r_grid,rho_grid,lnrho_interp):
+    """
+    Enclosed mass at a given radius, given the (non-parametric) density 
+    profile. 
+    
+    Syntax:
+    
+        mass(r,r_grid,rho_grid)
+        
+    where
+    
+        r: radius at which we evaluate the enclosed mass (float)
+        r_grid: radii array of the density profile [kpc] (array)
+        rho_grid: density profile [M_sun kpc^-3] (array)
+        lnrho_interp: interpolation function ln(rho) as a function of 
+            ln(r), based on the density profile grid rho_grid and r_grid
+    """ 
+    if r<r_grid.min():
+        sys.exit('Radius too small. Stop.')
+    if r>r_grid.max():
+        sys.exit('Radius too large. Stop.')
+    f = lambda lnr: cfg.FourPi* (np.exp(lnr))**3 * np.exp(lnrho_interp(lnr))
+    I = quad(f, np.log(r_grid[0]), np.log(r), args=(), 
+        epsabs=1.e-7, epsrel=1.e-6,limit=10000)[0]
+    return cfg.FourPi/3.*r_grid[0]**3 * rho_grid[0] + I 
+
+def add_cyl_vecs(xv1, xv2):
+    """
+    Given two 6D position+velocity vectors in the cylindrical coordinate
+    system, computes their vector sum and returns a new 6D position+
+    velocity vector.
+    
+    Syntax:
+        
+        add_cyl_vecs(xv1, xv2)
+        
+    where
+    
+        xv1: the first 6D position+velocity vector (float array of length 6)
+        xv2: the second 6D position+velocity vector (float array of length 6)
+    
+    Return:
+     
+        xvnew: the vector sum of xv1 and xv2 (float array of length 6)
+    """
+    R1, phi1, z1, VR1, Vphi1, Vz1 = xv1
+    R2, phi2, z2, VR2, Vphi2, Vz2 = xv2
+    xvnew = np.zeros(6)
+    xvnew[2] = z1 + z2 # z add directly
+    xvnew[5] = Vz1 + Vz2
+    xnew = R1*np.cos(phi1) + R2*np.cos(phi2)
+    ynew = R1*np.sin(phi1) + R2*np.sin(phi2)
+    Rnew = np.sqrt(xnew**2. + ynew**2.)
+    phinew = np.arctan2(ynew, xnew)
+    xvnew[0] = Rnew
+    xvnew[1] = phinew
+    Vx1 = np.cos(phi1)*VR1 - np.sin(phi1)*Vphi1
+    Vy1 = np.sin(phi1)*VR1 + np.cos(phi1)*Vphi1
+    Vx2 = np.cos(phi2)*VR2 - np.sin(phi2)*Vphi2
+    Vy2 = np.sin(phi2)*VR2 + np.cos(phi2)*Vphi2
+    Vxnew = Vx1 + Vx2
+    Vynew = Vy1 + Vy2
+    VRnew = np.cos(phinew)*Vxnew + np.sin(phinew)*Vynew
+    Vphinew = -np.sin(phinew)*Vxnew + np.cos(phinew)*Vynew
+    xvnew[3] = VRnew
+    xvnew[4] = Vphinew
+    return xvnew

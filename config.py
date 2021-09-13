@@ -6,13 +6,17 @@
 # x defined here in the other modules as cfg.x 
 
 # Arthur Fangzhou Jiang 2017 Hebrew University
+# Sheridan Beckwith Green 2020 Yale University
+# Arthur Fangzhou Jiang 2021 Caltech & Carnegie
+
+# On 2021-05-04, added Benson+21 values of the PCH08 merger tree params
 
 #########################################################################
 
 import cosmo as co
 
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import interp1d, RectBivariateSpline, splrep
 
 ########################## user control #################################
 
@@ -24,17 +28,53 @@ OL = 0.7
 s8 = 0.8
 ns = 1.
 
+# COCO simulation values
+#h = 0.704
+#Om = 0.272
+#Ob = 0.04455
+#OL = 0.728
+#s8 = 0.81
+#ns = 0.967
+
 #---for merger tree (the parameters for the Parkinson+08 algorithm)
-M0 = 1e12 
-z0 = 0.
+M0 = 1e12 # [Msun] [DEFAULT]: Typically changed in TreeGen_Sub
+Mres = 1e8 # [Msun] [DEFAULT]: mass resolution of merger tree
+           # (Mres/M0 = psi_{res})
+psi_res = 10**-5 # Resolution limit of merger tree
+z0 = 0. # [DEFAULT]: Typically changed in TreeGen_Sub
 zmax = 20.
-G0 = 0.6353 
-gamma1 = 0.1761
-gamma2 = 0.0411
+
+# Benson17 values
+#G0 = 0.6353 
+#gamma1 = 0.1761
+#gamma2 = 0.0411
+#gamma3 = 0.
+
+# Benson+21 values
+G0 = 0.943
+gamma1 = -0.158
+gamma2 = 0.0488
+gamma3 = 0.202
 
 #---for satellite evolution 
-Mres = 1e4 # [Msun] mass resolution
-Rres = 0.001 # [kpc] spatial resolution
+phi_res = 10**-5 # Resolution in m/m_{acc}
+Rres = 0.001 # [kpc] spatial resolution (Over-written in SubEvo)
+lnL_pref = 0.75 # multiplier for Coulomb logarithm (fiducial 0.75)
+# NOTE: The lnL_pref default is 0.75, calibrated in Green+20
+# A typical default would be lnL_pref = 1.0
+lnL_type = 0 # indicates using log(Mh/Ms) (instantaneous)
+evo_mode = 'arbres' # or 'withering'
+
+# NOTE: Some of the above parameters are used in TreeGen_Sub and SubEvo
+# but not in TreeGen an SatEvo, and vice versa.
+# For example, in the subhalo-only evolution, we allow for specifying
+# between "arbitrary resolution" and "withering-on" modes.
+# However, in the SatEvo code, subhaloes+satellites are evolved down
+# to a specified Mres and orbits are evolved until they fall below
+# a particular Rres.
+# Furthermore, psi_res and phi_res use the notation of the Green+20
+# paper and are employed in TreeGen_Sub/SubEvo but are not necessary
+# in the example implementations of TreeGen/SatEvo
 
 ############################# constants #################################
 
@@ -47,8 +87,10 @@ RootPi = np.sqrt(np.pi)
 Root2OverPi = np.sqrt(2./np.pi)
 Root1Over2Pi = np.sqrt(0.5/np.pi)
 TwoOverRootPi = 2./np.sqrt(np.pi)
+FourOverRootPi = 4./np.sqrt(np.pi)
 FourPiOverThree = 4.*np.pi/3.
 TwoPi = 2.*np.pi
+TwoPiG = 2.*np.pi*G
 TwoPisqr = 2.*np.pi**2
 ThreePi = 3.*np.pi
 FourPi = 4.*np.pi
@@ -110,8 +152,9 @@ dtsample = []
 z = z0
 while z<=zmax:
     tlkbk = co.tlkbk(z,h,Om,OL)
-    tdyn = co.tdyn(z,h,Om,OL)
-    dt = 0.1 * tdyn
+    tdyn = co.tdyn(z,h,Om,OL) # NOTE: This uses BN98 for Delta
+    dt = min(0.06, 0.1 * tdyn)
+    # NOTE: The above sets the maximum output time step to be 0.06 Gyr
     z = ztlkbk_interp(tlkbk+dt)
     zsample.append(z)
     dtsample.append(dt)
@@ -132,3 +175,79 @@ print('>>> Tabulating Parkinson+08 J(u_res) ...')
 ures_grid = np.logspace(-6.,6.,1000)
 J_grid = co.J_vec(ures_grid)
 Jures_interp = interp1d(ures_grid, J_grid, kind='linear')
+
+# for Green and van den Bosch (2019) transfer function
+gvdb_fp = np.array([ 3.37821658e-01, -2.21730464e-04,  1.56793984e-01,
+                     1.33726984e+00,  4.47757739e-01,  2.71551083e-01, 
+                    -1.98632609e-01,  1.05905814e-02, -1.11879075e+00,  
+                     9.26587706e-02,  4.43963825e-01, -3.46205146e-02,
+                    -3.37271922e-01, -9.91000445e-02,  4.14500861e-01])
+
+# for computing enclosed mass within Green and van den Bosch (2019)
+print('>>> Building interpolation grid for Green+19 M(<r|f_b,c)...')
+print('>>> Building interpolation grid for Green+19 sigma(r|f_b,c)...')
+print('>>> Building interpolation grid for Green+19 d2Phidr2(r|f_b,c)...')
+gvdb_mm = np.load('etc/gvdb_mm.npy')
+gvdb_sm = np.load('etc/gvdb_sm.npy')
+gvdb_pm = np.load('etc/gvdb_pm.npy')
+nfb = 100
+nr = 131
+ncs = 30
+fb_vals_int = np.logspace(-5, 0, nfb)
+# NOTE: This approach implicitly assumes that DASH concentrations correspond
+# to virial concentrations, and hence that DASH truncates at the BN98 virial
+# radius.
+r_vals_int = np.logspace(-5.5, 1., nr)
+cs_vals_int = np.logspace(0, np.log10(40), ncs)
+fbv_min = np.min(fb_vals_int) # Same as phi_{res} in paper; fiducial of 10^-5
+assert phi_res >= fbv_min, "phi_res can't be smaller than fbv_min=10^-5"
+fbv_max = np.max(fb_vals_int)
+rv_min = np.min(r_vals_int)
+rv_max = np.max(r_vals_int)
+csv_min = np.min(cs_vals_int)
+csv_max = np.max(cs_vals_int)
+log_fb_vals_int = np.log10(fb_vals_int)
+log_r_vals_int = np.log10(r_vals_int)
+log_cs_vals_int = np.log10(cs_vals_int)
+fb_cs_interps_mass = []
+fb_cs_interps_sigma = []
+fb_cs_interps_d2Phidr2 = []
+# TODO: Decide if switching to linear-space from log-space gives
+# a speed-up sufficiently worth it..?
+for i in range(0, nr):
+    fb_cs_interps_mass.append(RectBivariateSpline(log_fb_vals_int,
+                                                  log_cs_vals_int,
+                                                  gvdb_mm[:,:,i]))
+    fb_cs_interps_sigma.append(RectBivariateSpline(log_fb_vals_int,
+                                                   log_cs_vals_int,
+                                                   gvdb_sm[:,:,i]))
+    fb_cs_interps_d2Phidr2.append(RectBivariateSpline(log_fb_vals_int,
+                                                      log_cs_vals_int,
+                                                      gvdb_pm[:,:,i]))
+
+
+# Jiang+15 subhalo orbital model parameters (Table 2)
+# rows correspond to host mass (i.e., peak height)
+# columns correspond to msub/mhost
+print('>>> Building interpolator for Jiang+15 orbit sampler...')
+ncdf_pts = 100
+V_by_V200c_arr = np.linspace(0., 2.6, ncdf_pts)
+Vr_by_V_arr = np.linspace(0., 1., ncdf_pts)
+jiang_cdfs = np.load('etc/jiang_cdfs.npz')
+V_by_V200c_cdf = jiang_cdfs['V_by_V200c']
+Vr_by_V_cdf = jiang_cdfs['Vr_by_V']
+
+V_by_V200c_interps = []
+Vr_by_V_interps = []
+
+for i in range(0,3):
+    V_by_V200c_interps.append([])
+    Vr_by_V_interps.append([])
+    for j in range(0,3):
+        V_by_V200c_interps[i].append(splrep(V_by_V200c_cdf[i,j], 
+                                            V_by_V200c_arr))
+        Vr_by_V_interps[i].append(splrep(Vr_by_V_cdf[i,j],
+                                         Vr_by_V_arr))
+
+jiang_nu_boundaries = co.nu([5e12, 5e13], 0., **cosmo)
+jiang_ratio_boundaries = np.array([0.005, 0.05])

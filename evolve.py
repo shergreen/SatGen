@@ -2,6 +2,7 @@
 
 # Arthur Fangzhou Jiang 2016, HUJI --- original version
 # Arthur Fangzhou Jiang 2019, HUJI, UCSC --- revisions
+# Sheridan Beckwith Green 2020, Yale University
 
 #########################################################################
 
@@ -223,6 +224,38 @@ def Dekel2(mv,mv0,lmax0,vmax0,alpha0,slope0,z=0.):
 
 #---for tidal stripping
 
+def alpha_from_c2(c2p, c2s):
+    """
+    Compute the best stripping efficiency prefactor, alpha, as a function of
+    the instantaneous host- and initial subhalo concentrations.
+
+    Syntax:
+    
+        alpha_from_c2(c2p, cs2)
+
+    where
+
+        c2p: instantaneous host NFW concentration
+        c2s: initial subhalo NFW concentration
+
+    Return
+
+        stripping efficiency, alpha (float)
+
+    NOTE:
+
+        The initial NFW subhalo concentration is used, as the
+        Green and van den Bosch (2019) density profile model takes
+        into account the evolution of the density profile of the subhalo
+        given the INITIAL NFW profile.
+
+    TODO:
+    
+        Update this based on the final DASH calibration.
+    """
+    return 0.55 * ((c2s/c2p) / 2.)**(-1./3.)
+
+
 def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     """
     Evolve subhalo mass due to tidal stripping, by an amount of
@@ -263,7 +296,9 @@ def msub(sp,potential,xv,dt,choice='King62',alpha=1.):
     lt = ltidal(sp,potential,xv,choice)
     if lt<sp.rh: 
         dm = alpha * (sp.Mh-sp.M(lt)) * dt/pr.tdyn(potential,xv[0],xv[2])
-        m = max(sp.Mh-dm,cfg.Mres)
+        dm = max(dm,0.) # avoid negative dm
+        m = max(sp.Mh-dm,cfg.phi_res*sp.Minit) 
+        # changed from max(sp.Mh-dm,cfg.Mres), which is used for fixed Mres
     else:
         m = sp.Mh
     return m,lt
@@ -292,89 +327,92 @@ def ltidal(sp,potential,xv,choice='King62'):
     radius (i.e., weaker tidal stripping). 
     """
     a = cfg.Rres
-    b = 100.*sp.rh
+    b = 9.999*sp.rh
     if choice=='King62':
-        fa = Findlt_King62(a,sp,potential,xv)
-        fb = Findlt_King62(b,sp,potential,xv)
-        if fa*fb>0.:
-            lt = cfg.Rres
-        else:
-            lt = brentq(Findlt_King62, a,b, args=(sp,potential,xv),
-                xtol=0.001,rtol=1e-5,maxiter=1000)
+        rhs = lt_King62_RHS(potential,xv)
     elif choice=='Tormen98':
-        fa = Findlt_Tormen98(a,sp,potential,xv)
-        fb = Findlt_Tormen98(b,sp,potential,xv)
-        if fa*fb>0.:
-            lt = cfg.Rres
-        else:
-            lt = brentq(Findlt_Tormen98, a,b, args=(sp,potential,xv),
-                xtol=0.001,rtol=1e-5,maxiter=1000)
+        rhs = lt_Tormen98_RHS(potential,xv)
     else: 
-        sys.exit('Invalid choice!')
+        sys.exit('Invalid choice of tidal radius type!')
+
+    fa = Findlt(a,sp,rhs)
+    fb = Findlt(b,sp,rhs)
+    if fa*fb>0.:
+        lt = cfg.Rres
+    else:
+        lt = brentq(Findlt, a,b, args=(sp,rhs),
+            rtol=1e-5,maxiter=1000)
     return lt
-def Findlt_Tormen98(l,sp,potential,xv):
+def lt_Tormen98_RHS(potential,xv):
     """
-    Auxiliary function for 'ltidal', which returns the 
-    
-        left-hand side - right-hand side
-    
+    Auxiliary function for 'ltidal', which returns the right-hand side
     of the Tormen98 equation for tidal radius, as in eq.(3) of 
-    van den Bosch+18
+    van den Bosch+18, but inverted and with all subhalo terms on
+    left-hand side.
     
     Syntax:
     
-        Findlt_Tormen98(l,sp,potential,xv)
+        lt_Tormen98_RHS(potential,xv)
     
     where
     
-        l: radius in the satellite [kpc] (float)
-        sp: satellite potential (an object define in profiles.py)
         potential: host potential (a density profile object, or a list of
             such objects that constitute a composite potential)
         xv: phase-space coordinates [R,phi,z,VR,Vphi,Vz] in units of 
             [kpc,radian,kpc,kpc/Gyr,kpc/Gyr,kpc/Gyr] (float array)
     """
     r = np.sqrt(xv[0]**2.+xv[2]**2.)
-    r1 = r*(1.-cfg.eps)
-    r2 = r*(1.+cfg.eps)
-    m = sp.M(l)
     M = pr.M(potential,r)
-    M1 = pr.M(potential,r1)
-    M2 = pr.M(potential,r2)
-    dlnMdlnr = (np.log(M2)-np.log(M1))/(np.log(r2)-np.log(r1))
-    return l - r * (m/M / (2. - dlnMdlnr))**(1./3.)
-def Findlt_King62(l,sp,potential,xv):
+    rho = pr.rho(potential,r)
+    dlnMdlnr = cfg.FourPi * r**3 * rho / M
+    return (M / r**3) * (2. - dlnMdlnr)
+def lt_King62_RHS(potential,xv):
+    """
+    Auxiliary function for 'ltidal', which returns the right-hand side
+    of the King62 equation for tidal radius, as in eq.(12.21) of 
+    Mo, van den Bosch, White 10, but inverted and with all subhalo
+    terms on left-hand side.
+    
+    Syntax:
+    
+        lt_King62_RHS(potential,xv)
+    
+    where
+    
+        potential: host potential (a density profile object, or a list of
+            such objects that constitute a composite potential)
+        xv: phase-space coordinates [R,phi,z,VR,Vphi,Vz] in units of 
+            [kpc,radian,kpc,kpc/Gyr,kpc/Gyr,kpc/Gyr] (float array)
+    """
+    r = np.sqrt(xv[0]**2.+xv[2]**2.)
+    Om = Omega(xv)
+    M = pr.M(potential,r)
+    rho = pr.rho(potential,r)
+    dlnMdlnr = cfg.FourPi * r**3 * rho / M
+    return (M / r**3) * (2.+Om**2.*r**3/cfg.G/M - dlnMdlnr)
+def Findlt(l,sp,rhs):
     """
     Auxiliary function for 'ltidal', which returns the 
     
         left-hand side - right-hand side
-        
-    of the King62 equation for tidal radius, as in eq.(12.21) of 
-    Mo, van den Bosch, White 10
+    
+    of the equation for tidal radius. Note that this works
+    for either the Tormen98 or King62, since all differences
+    are contained in the pre-computed right-hand side.
     
     Syntax:
     
-        Findlt_King62(l,sp,potential,xv)
+        Findlt(l,sp,rhs)
     
     where
     
         l: radius in the satellite [kpc] (float)
         sp: satellite potential (an object define in profiles.py)
-        potential: host potential (a density profile object, or a list of
-            such objects that constitute a composite potential)
-        xv: phase-space coordinates [R,phi,z,VR,Vphi,Vz] in units of 
-            [kpc,radian,kpc,kpc/Gyr,kpc/Gyr,kpc/Gyr] (float array)
+        rhs: right-hand side of equation, computed by either
+        lt_Tormen98_RHS() or lt_King62_RHS() (float)
     """
-    r = np.sqrt(xv[0]**2.+xv[2]**2.)
-    r1 = r*(1.-cfg.eps)
-    r2 = r*(1.+cfg.eps)
-    Om = Omega(xv)
     m = sp.M(l)
-    M = pr.M(potential,r)
-    M1 = pr.M(potential,r1)
-    M2 = pr.M(potential,r2)
-    dlnMdlnr = (np.log(M2)-np.log(M1))/(np.log(r2)-np.log(r1))
-    return l - r * (m/M / (2.+Om**2.*r**3/cfg.G/M - dlnMdlnr))**(1./3.)
+    return (m / l**3) - rhs
 def Omega(xv):
     """
     Angular speed [Gyr^-1] upon input of phase-space coordinates
