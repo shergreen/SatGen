@@ -408,7 +408,7 @@ class NFW(object):
         """
         r = np.sqrt(R**2.+z**2.)
         x = r / self.rs
-       return self.Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
+        return self.Vmax*1.4393*x**0.354/(1.+1.1756*x**0.725)
     def sigma_accurate(self,R,z=0.,beta=0.):
         """
         Velocity dispersion [kpc/Gyr].
