@@ -123,11 +123,11 @@ def loop(itree):
             
             if Np>1 and cfg.M0>cfg.Mres: # register next-level branches
             
-                Nbranch += 1
                 Mak_tmp.append(M2)
                 zak_tmp.append(cfg.z0)
                 idk_tmp.append(Nbranch)
                 ipk_tmp.append(id)
+                Nbranch += 1
             
             # record the mass history at the original time resolution
             M.append(cfg.M0)
