@@ -17,7 +17,7 @@ import config as cfg
 import cosmo as co
 import init
 from profiles import NFW
-import aux
+import satgen_aux as aux
 
 #---python modules
 import numpy as np
